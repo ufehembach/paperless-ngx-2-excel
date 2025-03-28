@@ -15,8 +15,6 @@ import configparser
 import glob
 import pprint
 
-
-
 from configparser import ConfigParser
 from tqdm import tqdm
 from datetime import datetime
