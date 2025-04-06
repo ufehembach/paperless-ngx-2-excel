@@ -49,6 +49,73 @@ import os
 import os
 import glob
 
+import shutil
+
+import subprocess
+
+import os
+import subprocess
+import urllib.request
+import json
+import re
+
+def get_git_version(default="v0.0.0"):
+    try:
+        version = subprocess.check_output(
+            ["git", "describe", "--tags", "--always"],
+            stderr=subprocess.DEVNULL
+        )
+        return version.decode("utf-8").strip()
+    except Exception:
+        return default
+
+def get_github_repo_info():
+    try:
+        url = subprocess.check_output(
+            ["git", "config", "--get", "remote.origin.url"],
+            stderr=subprocess.DEVNULL
+        ).decode("utf-8").strip()
+
+        # z. B. https://github.com/ufe-dev/paperless-ngx-2-excel.git
+        # oder git@github.com:ufe-dev/paperless-ngx-2-excel.git
+
+        match = re.search(r"github.com[:/](.+?)/(.+?)(\.git)?$", url)
+        if match:
+            user, repo = match.group(1), match.group(2)
+            return user, repo
+    except Exception:
+        pass
+
+    return None, None
+
+def get_github_license_identifier(user, repo):
+    url = f"https://api.github.com/repos/{user}/{repo}/license"
+    try:
+        with urllib.request.urlopen(url) as response:
+            data = json.load(response)
+            return data["license"]["spdx_id"]
+    except Exception as e:
+        print(f"⚠️ Lizenz konnte nicht geladen werden: {e}")
+        return None
+
+def print_program_header():
+    script_name = os.path.basename(__file__)
+    version = get_git_version()
+    user, repo = get_github_repo_info()
+    license_id = get_github_license_identifier(user, repo) if user and repo else "Unbekannt"
+    github_url = f"https://github.com/{user}/{repo}" if user and repo else "(kein GitHub-Repo erkannt)"
+
+    print(f"{script_name} {version} – © 2025 {license_id} – {github_url}")
+
+def print_separator(char='#', width_ratio=2/3):
+    try:
+        columns = shutil.get_terminal_size().columns
+    except Exception:
+        columns = 80  # fallback
+    line_width = int(columns * width_ratio)
+    print('\n')
+    print(char * line_width)
+
 def cleanup_old_files(dir_path, filename_prefix, max_count_str, pattern="log"):
     """
     Löscht alte Dateien mit bestimmtem Prefix und Endung, wenn das Limit überschritten ist.
@@ -85,7 +152,7 @@ def get_log_filename(script_name, log_dir, suffix="progress"):
         return os.path.join(log_dir, f"##{script_name}__{timestamp}.{suffix}.log")
 
 # ----------------------
-def initialize_log(log_dir, script_name, max_logs):
+def initialize_log(log_dir, script_name, max_files):
     final_log_path = get_log_filename(script_name, log_dir, "log")
     progress_log_path = get_log_filename(script_name, log_dir, "progress")
     
@@ -98,7 +165,7 @@ def initialize_log(log_dir, script_name, max_logs):
         open(progress_log_path, "w").close()  # Erstelle eine leere Log-Datei
     
     # Aufräumen: Älteste Logs löschen, falls nötig
-    cleanup_old_files(log_dir, "##"+script_name, max_logs)
+    cleanup_old_files(log_dir, "##"+script_name, max_files)
 
     return progress_log_path, final_log_path
 
@@ -132,7 +199,7 @@ def print_progress(message: str):
 # ----------------------
 def load_config(config_path):
     """Lädt eine INI-Konfigurationsdatei, gibt None zurück bei Fehlern."""
-    print_progress("process...")
+    #print_progress("process...")
     config = configparser.ConfigParser()
     try:
         config.read(config_path)
@@ -477,7 +544,7 @@ def export_json(paperless,doc, working_dir):
 
 # ---------------------- Excel Export Helpers ----------------------
 # ----------------------
-def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta):
+def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta,maxfiles):
     import pandas as pd
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
@@ -493,7 +560,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
 
     # Ordnerpfad aus file_path extrahieren
     directory = os.path.dirname(file_path)
-    cleanup_old_files(file_path, filename_prefix="##" + directory ,pattern="xlsx")
+    cleanup_old_files(file_path, filename_prefix="##" + directory ,pattern="xlsx",max_count_str=maxfiles)
 
     # Dateiname vorbereiten
     fullfilename = file_path
@@ -501,13 +568,6 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     filename_without_extension, file_extension = os.path.splitext(os.path.basename(file_path))
     base_filename = f"{filename_without_extension}-0{file_extension}"
     fullfilename = os.path.join(directory, base_filename)
-
-    # Falls Datei bereits existiert, iterativ neuen Namen finden
-    counter = 1
-    while os.path.exists(fullfilename):
-        filename = f"{filename_without_extension}-{counter}{file_extension}"
-        fullfilename = os.path.join(directory, filename)
-        counter += 1
 
     # Falls Datei bereits geöffnet oder existiert, iterativ neuen Namen finden
     counter = 1
@@ -662,7 +722,10 @@ async def get_documents_with_retry(paperless, query):
 async def collect_async_iter(aiter):
     return [item async for item in aiter]
 
-async def exportThem(paperless, dir, query, progress_log_path):
+async def search_documents(paperless, query):
+    return [item async for item in paperless.documents.search(query)]
+
+async def exportThem(paperless, dir, query, progress_log_path,max_files):
     count = 0 
     """Process and export documents"""
     document_data = []
@@ -672,10 +735,14 @@ async def exportThem(paperless, dir, query, progress_log_path):
 
 #    documents = [item async for item in paperless.documents.search(query)]
     documents = await retry_async(
-        lambda: collect_async_iter(paperless.documents.search(query)),
-        desc=f"Dokumente für Query '{query}'"
-    )
+       lambda: search_documents(paperless, query),
+       desc=f"Dokumente für Query '{query}'"
+       )
 
+    #documents = await retry_async(
+    #   lambda: collect_async_iter(paperless.documents.search(query)),
+    #    desc=f"Dokumente für Query '{query}'"
+    #)
 
     for doc in tqdm(documents, desc=f"Processing documents for '{dir}/{query}'", unit="doc"):
         count += 1
@@ -743,11 +810,14 @@ async def exportThem(paperless, dir, query, progress_log_path):
 
 
     excel_file = os.path.join(dir, f"##{last_dir}-{datetime.now().strftime('%Y%m%d')}.xlsx")
-    export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta )
+    export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta, maxfiles=max_files)
     log_message(progress_log_path, f"dir: {dir}, Documents exported: {len(document_data)}")
     print(f"Exported Excel file: {excel_file}")
 
 async def main():
+    print_program_header()
+
+    print_separator('=', 0.75)      # 50% der Breite
     script_name = get_script_name()
     config = load_config_from_script()
 
@@ -755,10 +825,10 @@ async def main():
     api_url = config.get("API", "url")
     api_token = config.get("API", "token")
     log_dir = config.get("Log", "log_file")
-    max_logs = config.get("Log", "max_logs")
+    max_files = config.get("Log", "max_files")
 
     # Log-Dateien initialisieren
-    progress_log_path, final_log_path = initialize_log(log_dir, script_name, max_logs)
+    progress_log_path, final_log_path = initialize_log(log_dir, script_name, max_files=max_files)
     log_message(progress_log_path, message="Log in...")
     print_progress( message="Log in...")
 
@@ -801,12 +871,20 @@ async def main():
               frequency = 'daily'
 
           should_run, reason = should_export(root, frequency, config_mtime)
-
           if should_run:
-              print(f"\n{root} {query_value} -> doExport ({reason})")
-              await exportThem(paperless=paperless, dir=root, query=query_value, progress_log_path=progress_log_path)
+              #print_separator('#')           # #######...
+              #print_separator('##')          # ## ## ## ...
+              #print_separator('=')           # ==========...
+              #print_separator('·', 0.5)      # 50% der Breite
+              print_separator('=', 0.75)      # 50% der Breite
+              #print(f"\n{root} {query_value} -> Export ({reason})")
+              print(f"\n{query_value} -> Export ({reason})")
+              await exportThem(paperless=paperless, dir=root, query=query_value, progress_log_path=progress_log_path,max_files=max_files)
           else:
-              print(f"\n{root} {query_value} -> skipped ({reason})")
+              #print(f"\n{root} {query_value} -> NOexport ({reason})")
+              print_separator('-', 0.75)      # 50% der Breite
+              print(f"\n{query_value} -> NOexport ({reason})")
+
     except Exception as e:
         log_message(progress_log_path, f"Error: {str(e)}")
         raise
