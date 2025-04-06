@@ -18,9 +18,12 @@ import asyncio
 import os
 import aiohttp
 import re
+import shutil
 from time import sleep
 import asyncio
 import aiohttp
+from datetime import datetime
+from dateutil import parser
 from collections import OrderedDict
 
 from configparser import ConfigParser
@@ -43,39 +46,37 @@ from pypaperless import Paperless
 import glob
 import os
 
-def cleanup_old_logs(log_dir, script_name, max_logs_str):
-    """ Löscht alte Logs, wenn die Anzahl der Log-Dateien das Limit überschreitet. """
-    
-    # Debug: Zeige den Log-Verzeichnispfad
-    print(f"Log-Verzeichnis: {log_dir}")
-    
-    # Erstelle ein verbessertes Glob-Muster für .log- und .progress.log-Dateien
-    #log_files = sorted(glob.glob(os.path.join(log_dir, f"##{script_name}__*.log")) + 
-    #                   glob.glob(os.path.join(log_dir, f"##{script_name}__*.progress.log")),
-    #                   key=os.path.getmtime)
-    log_files = sorted(glob.glob(os.path.join(log_dir, f"##{script_name}__*.log")) ,
-                       key=os.path.getmtime)
-    
-    # Debug: Zeige die gefundenen Log-Dateien
-    #print(f"Gefundene Log-Dateien: {log_files}")
-    
-    max_logs = int(max_logs_str)
-    if len(log_files) <= max_logs:
-        print(f"Anzahl der Log-Dateien ({len(log_files)}) ist kleiner oder gleich dem Limit ({max_logs}). Keine Dateien zum Löschen.")
-        return  # Wenn die Anzahl der Dateien innerhalb des Limits liegt, keine Dateien löschen
-    
-    # Lösche alte Dateien, falls die Anzahl die Grenze überschreitet
-    while len(log_files) > max_logs:
-        old_file = log_files.pop(0)  # Holen der ältesten Datei
-        if os.path.exists(old_file):  # Überprüfen, ob die Datei existiert
-            try:
-                os.remove(old_file)  # Lösche die Datei
-                print(f"Alte Log-Datei gelöscht: {old_file}")
-            except OSError as e:
-                print(f"Fehler beim Löschen der Datei {old_file}: {e}")
-        else:
-            print(f"Datei {old_file} existiert nicht mehr. Überspringe das Löschen.")
+import os
+import glob
 
+def cleanup_old_files(dir_path, filename_prefix, max_count_str, pattern="log"):
+    """
+    Löscht alte Dateien mit bestimmtem Prefix und Endung, wenn das Limit überschritten ist.
+
+    :param dir_path: Verzeichnis, in dem gesucht wird
+    :param filename_prefix: Anfang des Dateinamens, z. B. '##steuer'
+    :param max_count_str: Maximale Anzahl an Dateien als String
+    :param pattern: Dateityp bzw. Dateiendung, z. B. 'log' oder 'xlsx'
+    """
+    max_count = int(max_count_str)
+    glob_pattern = os.path.join(dir_path, f"{filename_prefix}*.{pattern}")
+    files = sorted(glob.glob(glob_pattern), key=os.path.getmtime)
+
+    print(f"\n[Cleanup] Suche: {glob_pattern} – gefunden: {len(files)} Dateien")
+
+    if len(files) <= max_count:
+        print(f"[Cleanup] Nichts zu tun: {len(files)} ≤ {max_count}")
+        return
+
+    while len(files) > max_count:
+        old_file = files.pop(0)
+        try:
+            os.remove(old_file)
+            print(f"[Cleanup] Datei gelöscht: {old_file}")
+        except OSError as e:
+            print(f"[Cleanup] Fehler beim Löschen von {old_file}: {e}")
+
+# ----------------------
 def get_log_filename(script_name, log_dir, suffix="progress"):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     if suffix == "log":
@@ -83,6 +84,7 @@ def get_log_filename(script_name, log_dir, suffix="progress"):
     else:
         return os.path.join(log_dir, f"##{script_name}__{timestamp}.{suffix}.log")
 
+# ----------------------
 def initialize_log(log_dir, script_name, max_logs):
     final_log_path = get_log_filename(script_name, log_dir, "log")
     progress_log_path = get_log_filename(script_name, log_dir, "progress")
@@ -96,15 +98,17 @@ def initialize_log(log_dir, script_name, max_logs):
         open(progress_log_path, "w").close()  # Erstelle eine leere Log-Datei
     
     # Aufräumen: Älteste Logs löschen, falls nötig
-    cleanup_old_logs(log_dir, script_name, max_logs)
+    cleanup_old_files(log_dir, "##"+script_name, max_logs)
 
     return progress_log_path, final_log_path
 
 # Funktion, um das Log umzubenennen
+# ----------------------
 def finalize_log(progress_log_path, final_log_path):
     if os.path.exists(progress_log_path):
         os.rename(progress_log_path, final_log_path)
 
+# ----------------------
 def print_progress(message: str):
     frame = inspect.currentframe().f_back
     filename = os.path.basename(frame.f_code.co_filename)
@@ -125,17 +129,24 @@ def print_progress(message: str):
     print_progress._last_length = len(progress_message)
 
 # ---------------------- Configuration Loading ----------------------
+# ----------------------
 def load_config(config_path):
-    """Load configuration file."""
+    """Lädt eine INI-Konfigurationsdatei, gibt None zurück bei Fehlern."""
     print_progress("process...")
-    config = ConfigParser()
-    config.read(config_path)
-    return config
+    config = configparser.ConfigParser()
+    try:
+        config.read(config_path)
+        return config
+    except configparser.DuplicateSectionError as e:
+        print(f"❌ Fehlerhafte INI-Datei (Duplicate Section): {config_path} – wird übersprungen. {e}")
+        return None
 
+# ----------------------
 def get_script_name():
     """Return the name of the current script without extension."""
     return os.path.splitext(os.path.basename(sys.argv[0]))[0]
 
+# ----------------------
 def load_config_from_script():
     """Load the configuration from the ini file with a priority for the .ufe.ini file."""
     script_name = get_script_name()
@@ -161,6 +172,8 @@ def log_message(log_path, message):
     with open(log_path, "a") as log_file:
         log_file.write(f"{datetime.now()} - {message}\n")
 
+
+# ----------------------
 def parse_currency(value):
     """Parst einen Währungswert wie 'EUR5.00' in einen Float."""
     try:
@@ -171,6 +184,8 @@ def parse_currency(value):
         # print(f"Fehler beim Parsen des Währungswerts '{value}': {e}")
         return 0.0  # Fallback auf 0 bei Fehlern
 
+
+# ----------------------
 def format_currency(value, currency_locale="de_DE.UTF-8"):
     if value is None:
         return ""
@@ -186,6 +201,7 @@ def format_currency(value, currency_locale="de_DE.UTF-8"):
     formatted_value = locale.currency(value_float, grouping=True)
     return formatted_value
 
+# ----------------------
 def format_date(date_string, output_format):
     """
     Formatiert das Datum im Format '%d.%m.%Y' oder '%d.%m.%Y %H:%M' 
@@ -224,9 +240,8 @@ def format_date(date_string, output_format):
         return None
 
         return None
-from datetime import datetime
-from dateutil import parser
 
+# ----------------------
 def parse_date(date_input):
     """
     Gibt das Datum im Format '%d.%m.%Y' zurück, wenn Uhrzeit 00:00 ist,
@@ -251,13 +266,86 @@ def parse_date(date_input):
         print_progress(f"[parse_date] Failed to parse date '{date_input}': {e}")
         return None
 
+# ----------------------
+async def retry_async(fn, retries=3, delay=2, backoff=2,
+                      exceptions=(aiohttp.ClientError, asyncio.TimeoutError),
+                      desc=None):
+    current_delay = delay
+    for attempt in range(1, retries + 1):
+        try:
+            return await fn()
+        except exceptions as e:
+            if attempt == retries:
+                raise
+            label = f' bei "{desc}"' if desc else ''
+            print(f"[retry_async] Fehler{label}: {e} – Versuch {attempt}/{retries}, nächster in {current_delay}s...")
+            await asyncio.sleep(current_delay)
+            current_delay *= backoff
+
+# ----------------------
+def should_export(export_dir: str, frequency: str, config_mtime: float) -> tuple[bool, str]:
+
+    base_name = os.path.basename(export_dir)
+    latest_xlsx_mtime = None
+
+    for fname in os.listdir(export_dir):
+        if fname.startswith(f"##{base_name}-") and fname.endswith(".xlsx"):
+            fpath = os.path.join(export_dir, fname)
+            mtime = os.path.getmtime(fpath)
+            if latest_xlsx_mtime is None or mtime > latest_xlsx_mtime:
+                latest_xlsx_mtime = mtime
+
+    if latest_xlsx_mtime is None:
+        return True, "Keine .xlsx-Datei vorhanden"
+
+    if config_mtime > latest_xlsx_mtime:
+        config_time = datetime.fromtimestamp(config_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        xlsx_time = datetime.fromtimestamp(latest_xlsx_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        return True, (
+            f"Config modified: "
+            f"(INI: {config_time}, XLSX: {xlsx_time})"
+        )
+    
+
+    now = datetime.now()
+    last_export = datetime.fromtimestamp(latest_xlsx_mtime)
+    frequency = frequency.lower().strip()
+
+    readable_time = last_export.strftime('%Y-%m-%d %H:%M:%S')
+    # Bedingung beschreiben
+    if frequency == "hourly":
+        expected = (last_export + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+        cond = f"> {expected}"
+    elif frequency == "4hourly":
+        expected = (last_export + timedelta(hours=4)).strftime('%Y-%m-%d %H:%M:%S')
+        cond = f"> {expected}"
+    elif frequency in ("daily", "weekday"):
+        expected = (last_export + timedelta(days=1)).strftime('%Y-%m-%d')
+        cond = f"> {expected}"
+    elif frequency == "weekly":
+        expected = (last_export + timedelta(days=7)).strftime('%Y-%m-%d')
+        cond = f"> {expected}"
+    elif frequency == "monthly":
+        expected = f"{last_export.year}-{(last_export.month % 12) + 1:02d}"
+        cond = f"Monat != {last_export.strftime('%Y-%m')}"
+    elif frequency == "yearly":
+        expected = f"{last_export.year + 1}"
+        cond = f"Jahr != {last_export.year}"
+    else:
+        cond = "Unbekannt"
+
+    return False, (
+        f"noExport: last file {readable_time}, "
+        f"Frequenz '{frequency}': {cond}"
+    )
 
 async def get_dict_from_paperless(endpoint):
     """
     Generische Funktion, um ein Dictionary aus einem Paperless-Endpoint zu erstellen.
     Erwartet ein `endpoint`-Objekt, das eine `all()`-Methode und einen Abruf per ID unterstützt.
     """
-    items = await endpoint.all()
+    items = await retry_async(fn=lambda: endpoint.all())
+    #items = await endpoint.all()
     item_dict = {}
 
     for itemKey in items:
@@ -267,6 +355,7 @@ async def get_dict_from_paperless(endpoint):
     return item_dict  # Gibt ein Dictionary {ID: Objekt} zurück
 # Modulweiter Cache (z. B. ganz oben im Script)
 _paperless_meta_cache = None
+
 
 async def fetch_paperless_meta(paperless, log_path, force_reload=False):
     global _paperless_meta_cache
@@ -289,12 +378,18 @@ async def fetch_paperless_meta(paperless, log_path, force_reload=False):
         "custom_fields": paperless.custom_fields
     }.items():
         log_and_print(name)
-        meta[name] = await get_dict_from_paperless(endpoint)
-        print(f"{name.capitalize()}: {len(meta[name])}")
+        try:
+            meta[name] = await get_dict_from_paperless(endpoint)
+            print(f"{name.capitalize()}: {len(meta[name])}")
+        except Exception as e:
+            print(f"Fehler beim Abrufen von {name}: {e}")
+            log_message(log_path, f"Fehler beim Abrufen von {name}: {e}")
+            meta[name] = []  # Leere Liste als Fallback, damit getmeta nicht crasht
 
     _paperless_meta_cache = meta
     return meta
 
+# ----------------------
 def getmeta(key, doc, meta):
     """
     Holt den Wert aus den Metadaten basierend auf dem angegebenen Schlüssel und Dokument.
@@ -311,9 +406,10 @@ def getmeta(key, doc, meta):
 
         if key == "tags" and isinstance(index, list):  # Spezieller Fall für tags (Liste von Indizes)
             # Generiere den Tag-String für mehrere Tags
+                # Extrahiere die Tag-Namen basierend auf den Indizes in 'index'
             return ", ".join(
-                getmeta("tags", {"tags": tag_id}, meta) for tag_id in index
-            )
+            meta["tags"][tag_id].name  # Greift auf den Namen des Tags mit der ID aus index zu
+                for tag_id in index)
 
         # Wenn der Index gefunden wurde und der Index gültig ist
         if index is not None and 0 <= index < len(meta.get(f"{key}s", [])):
@@ -327,42 +423,22 @@ def getmeta(key, doc, meta):
         print(f"Fehler beim Abrufen von {key}: {e}")
         return 'Unbekannt'
 
-async def export_pdf(doc, working_dir, max_retries=3, retry_delay=5):
-    """Export a document's PDF with retry mechanism."""
+async def export_pdf(doc, working_dir):
+    """Exportiert ein Dokument als PDF mit automatischem Retry."""
     sanitized_title = sanitize_filename(doc.title)
     pdf_path = os.path.join(working_dir, f"{sanitized_title}.pdf")
 
-    # Retry-Mechanismus
-    for attempt in range(max_retries):
-        try:
-            download = await doc.get_download()
-            document_content = download.content
+    download = await retry_async(lambda: doc.get_download(), desc=f"PDF-Download für Dokument {doc.id}")
+    document_content = download.content
 
-            if not document_content:
-                print(f"Keine PDF-Daten für Dokument {doc.id} gefunden.")
-                return
+    if not document_content:
+        print(f"Keine PDF-Daten für Dokument {doc.id} gefunden.")
+        return
 
-            # Speichern des heruntergeladenen Dokuments
-            with open(pdf_path, 'wb') as f:
-                f.write(document_content)
+    with open(pdf_path, 'wb') as f:
+        f.write(document_content)
 
-            print(f"PDF für Dokument {doc.id} erfolgreich exportiert: {pdf_path}")
-            return  # Erfolg, beende die Funktion
-
-        except aiohttp.client_exceptions.ServerDisconnectedError as e:
-            print(f"Serververbindung für Dokument {doc.id} unterbrochen (Versuch {attempt + 1}/{max_retries}). {e}")
-        except aiohttp.client_exceptions.ClientConnectionError as e:
-            print(f"Verbindungsfehler für Dokument {doc.id} (Versuch {attempt + 1}/{max_retries}). {e}")
-        except Exception as e:
-            print(f"Fehler beim Exportieren der PDF für Dokument {doc.id}: {e} (Versuch {attempt + 1}/{max_retries})")
-        
-        # Warten und dann erneut versuchen
-        print(f"Warte {retry_delay} Sekunden bevor der nächste Versuch startet...")
-        await asyncio.sleep(retry_delay)
-
-    # Wenn alle Versuche fehlgeschlagen sind, protokolliere und überspringe das Dokument
-    print(f"PDF-Download für Dokument {doc.id} nach {max_retries} Versuchen fehlgeschlagen. Überspringe dieses Dokument.")
-
+# ----------------------
 def sanitize_filename(filename):
     """
     Remove or replace characters in the filename that are not allowed in file names.
@@ -370,6 +446,7 @@ def sanitize_filename(filename):
     sanitized = re.sub(r'[<>:"/\\|?*]', '-', filename)  # Ersetze verbotene Zeichen durch '-'
     return sanitized[:255]  # Truncate to avoid overly long filenames
 
+# ----------------------
 def get_document_json(paperless,doc):
     api_token = paperless._token # Dein-Token
     headers = {"Authorization": f"Token {api_token}"}
@@ -385,6 +462,7 @@ def get_document_json(paperless,doc):
     else:
         raise Exception(f"Failed to fetch document metadata: {response.status_code}")
 
+# ----------------------
 def export_json(paperless,doc, working_dir):
     """Export a document's metadata as JSON."""
     sanitized_title = sanitize_filename(doc.title)
@@ -398,6 +476,7 @@ def export_json(paperless,doc, working_dir):
 
 
 # ---------------------- Excel Export Helpers ----------------------
+# ----------------------
 def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta):
     import pandas as pd
     from openpyxl import Workbook
@@ -409,15 +488,26 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     import pwd
 
     # API-Basis-URL ohne `/api` generieren
- #base_url = api_url.rstrip("/api")
+    #base_url = api_url.rstrip("/api")
     base_url = url
 
     # Ordnerpfad aus file_path extrahieren
     directory = os.path.dirname(file_path)
+    cleanup_old_files(file_path, filename_prefix="##" + directory ,pattern="xlsx")
 
     # Dateiname vorbereiten
     fullfilename = file_path
+    # Dateiname vorbereiten (immer mit -0 starten)
     filename_without_extension, file_extension = os.path.splitext(os.path.basename(file_path))
+    base_filename = f"{filename_without_extension}-0{file_extension}"
+    fullfilename = os.path.join(directory, base_filename)
+
+    # Falls Datei bereits existiert, iterativ neuen Namen finden
+    counter = 1
+    while os.path.exists(fullfilename):
+        filename = f"{filename_without_extension}-{counter}{file_extension}"
+        fullfilename = os.path.join(directory, filename)
+        counter += 1
 
     # Falls Datei bereits geöffnet oder existiert, iterativ neuen Namen finden
     counter = 1
@@ -428,7 +518,6 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
 
     # Pandas DataFrame aus document_data erstellen
     df = pd.DataFrame(data)
-
 
     with pd.ExcelWriter(fullfilename, engine="openpyxl") as writer:
         # DataFrame in Excel schreiben (ab Zeile 3 für Daten)
@@ -512,6 +601,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
 
     print(f"\nExcel-Datei erfolgreich erstellt: {fullfilename}")
 
+# ----------------------
 def has_file_from_today(directory):
     """
     Prüft, ob im angegebenen Verzeichnis eine Datei existiert,
@@ -530,6 +620,7 @@ def has_file_from_today(directory):
                 return True
     return False
 
+# ----------------------
 def process_custom_fields(meta, doc):
     custom_fields = {}
     currency_fields = []  # Liste zum Speichern der Currency-Feldnamen
@@ -562,6 +653,15 @@ def process_custom_fields(meta, doc):
 
     return custom_fields, currency_fields
 
+async def get_documents_with_retry(paperless, query):
+    return await retry_async(
+        lambda: collect_async_iter(paperless.documents.search(query)),
+        desc=f"Dokumente für Query '{query}'"
+    )
+
+async def collect_async_iter(aiter):
+    return [item async for item in aiter]
+
 async def exportThem(paperless, dir, query, progress_log_path):
     count = 0 
     """Process and export documents"""
@@ -570,49 +670,42 @@ async def exportThem(paperless, dir, query, progress_log_path):
     custom_fields = {}
     meta = await fetch_paperless_meta(paperless, progress_log_path)
 
-    documents = [item async for item in paperless.documents.search(query)]
+#    documents = [item async for item in paperless.documents.search(query)]
+    documents = await retry_async(
+        lambda: collect_async_iter(paperless.documents.search(query)),
+        desc=f"Dokumente für Query '{query}'"
+    )
+
 
     for doc in tqdm(documents, desc=f"Processing documents for '{dir}/{query}'", unit="doc"):
         count += 1
 
-        # Retry-Mechanismus für das Abrufen der Metadaten
-        metadata = None
-        retries = 3  # Anzahl der Versuche
-        for attempt in range(retries):
-            try:
-                # Abrufen der Metadaten des Dokuments
-                metadata = await doc.get_metadata()
-                break  # Wenn erfolgreich, breche die Schleife ab
-            except aiohttp.client_exceptions.ServerDisconnectedError as e:
-                print(f"Fehler beim Abrufen der Metadaten für Dokument {doc.id}: Serververbindung unterbrochen. Versuch {attempt + 1}/{retries}. {e}")
-            except asyncio.TimeoutError as e:
-                print(f"Timeout beim Abrufen der Metadaten für Dokument {doc.id}: Versuch {attempt + 1}/{retries}. {e}")
-            except Exception as e:
-                print(f"Unerwarteter Fehler beim Abrufen der Metadaten für Dokument {doc.id}: {e}. Versuch {attempt + 1}/{retries}")
-            
-            # Wenn der Abruf fehlschlägt, warte 5 Sekunden und versuche es erneut
-            print(f"Warte 5 Sekunden bevor der nächste Versuch startet...")
-            await asyncio.sleep(5)
-
-        if not metadata:
-            print(f"Metadaten für Dokument {doc.id} konnten nach {retries} Versuchen nicht abgerufen werden. Überspringe dieses Dokument.")
-            continue  # Wenn Metadaten nicht abgerufen werden konnten, überspringe das Dokument
+        try:
+          metadata = None
+          #  metadata = await retry_async(lambda: doc.get_metadata(), desc=f"Metadaten für Dokument {doc.id}")
+        except Exception as e:
+            print(f"Metadaten für Dokument {doc.id} konnten nicht geladen werden: {e}. Überspringe dieses Dokument.")
+            continue
 
         docData = doc._data
         page_count = docData['page_count']
+        documents = await retry_async(
+                lambda: collect_async_iter(paperless.documents.search(query)),
+                desc=f"Dokumente für Query '{query}'"
+                )
+
         custom_fields, doc_currency_columns = process_custom_fields(meta=meta,doc=docData)
         currency_columns.extend(doc_currency_columns)  # Speichere Currency-Felder
-
-        tags = getmeta("tags", doc, meta)
+        thisTags =  getmeta("tags", doc, meta=meta)
 
 
         # Daten für die Excel-Tabelle sammeln
-        row = OrderedDict(
+        row = OrderedDict([
             ("ID", doc.id),
             (  "AddDateFull", format_date(parse_date(doc.added), "yyyy-mm-dd")),
             ("Korrespondent", meta["correspondents"][doc.correspondent].name),
             ("Titel", doc.title),
-            ("Tags", getmeta("tags", doc, meta)),
+            ("Tags", thisTags), 
 
             # Custom Fields direkt hinter den Tags Pieinfügen
             *custom_fields.items(),  
@@ -631,8 +724,8 @@ async def exportThem(paperless, dir, query, progress_log_path):
             ("Speicherpfad", getmeta("storage_path", doc, meta)),
             ("OriginalName", doc.original_file_name),
             ("ArchivedName", doc.archived_file_name),
-            ("Owner", getattr(meta["users"].get(doc.owner), "username", "Unbekannt") if doc.owner else "Unbekannt"),
-            #("Notes", doc.notes),
+            ("Owner", getattr(meta["users"].get(doc.owner), "username", "Unbekannt") if doc.owner else "Unbekannt")
+        ]
         )
 
         document_data.append(row)
@@ -643,7 +736,7 @@ async def exportThem(paperless, dir, query, progress_log_path):
 
 
     # Exportiere die gesammelten Daten nach Excel
-    path=doc._api_path 
+    #path=doc._api_path 
     url=paperless._base_url
 
     last_dir = os.path.basename(dir)
@@ -652,74 +745,6 @@ async def exportThem(paperless, dir, query, progress_log_path):
     excel_file = os.path.join(dir, f"##{last_dir}-{datetime.now().strftime('%Y%m%d')}.xlsx")
     export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta )
     log_message(progress_log_path, f"dir: {dir}, Documents exported: {len(document_data)}")
-    print(f"Exported Excel file: {excel_file}")
-
-
-async def OLD_exportThem(paperless, dir, query,progress_log_path):
-    count = 0 
-
-    """Process and export documents """
-    document_data = []
-    currency_columns = []  # Liste zur Speicherung aller Currency-Felder
-    custom_fields = {}
-    meta = await fetch_paperless_meta(paperless, progress_log_path)
-
-    documents = [item async for item in paperless.documents.search(query)]
-   #     print(f"ID: {item.id}, Titel: {item.title}, Datum: {item.created}, correspondent: {item.correspondent} Storage_path: {item.storage_path}")
-    for doc in tqdm(documents, desc=f"Processing documents for '{dir}/{query}'", unit="doc"):
-        count+=1
-        #custom_fields, doc_currency_columns = process_custom_fields(custom_fields_map, detailed_doc)
-        #currency_columns.extend(doc_currency_columns)  # Speichere Currency-Felder
-
-       # Dokumentdaten sammeln
-        metadata = await doc.get_metadata()
-        docData=doc._data
-        page_count=docData['page_count']
-
-        row = OrderedDict([
-            ("ID", doc.id),
-            ("AddDateFull", format_date(parse_date(doc.added), "yyyy-mm-dd")),
-            ("Korrespondent", meta["correspondents"][doc.correspondent].name),
-            #get_name_from_id(url, headers, "correspondents", doc.get("correspondent"))),
-            ("Titel", doc.title),
-            #("Tags", ", ".join(tag_dict.get(tag_id, f"Tag {tag_id}") for tag_id in doc.get("tags", []))),
-
-            # Custom Fields direkt hinter den Tags einfügen
-            #*custom_fields.items(),  
-
-            ("ArchivDate", parse_date(doc.created)),
-            ("ArchivedDateMonth", format_date(parse_date(doc.created), "yyyy-mm")),
-            ("ArchivedDateFull", format_date(parse_date(doc.created), "yyyy-mm-dd")),
-
-            ("ModifyDate", parse_date(doc.modified)),
-            ("ModifyDateMonth", format_date(parse_date(doc.modified), "yyyy-mm")),
-            ("ModifyDateFull", format_date(parse_date(doc.modified), "yyyy-mm-dd")),
-
-            ("AddedDate", parse_date(doc.added)),
-            ("AddDateMonth", format_date(parse_date(doc.added), "yyyy-mm")),
-            ("AddDateFull", format_date(parse_date(doc.added), "yyyy-mm-dd")),
-
-
-            ("Seiten", doc._data['page_count']),
-            ("Dokumenttyp", getmeta("document_type", doc, meta)),
-            ("Speicherpfad", getmeta("storage_path", doc, meta)),
-
-            ("OriginalName", doc.original_file_name),
-            ("ArchivedName", doc.archived_file_name),
-            ("Owner", meta["users"][doc.owner].username),
-
-            ("Notes", doc.notes),
-        ])
-
-        document_data.append(row) 
-
-        await export_pdf(doc, working_dir=dir)
-       # export_json(paperless=paperless, doc=doc, working_dir=dir )
-        document_data.append(row)
-
-    excel_file = os.path.join(dir,f"##{tag_name}-{datetime.now().strftime('%Y%m%d')}.xlsx")
-    export_to_excel(document_data, excel_file, script_name, tag_name, api_url=url, custom_fields_map=custom_fields_map, currency_columns=currency_columns)
-    log_message(progress_log_path, f"Dir: {dir}, Documents exported: {len(document_data)}")
     print(f"Exported Excel file: {excel_file}")
 
 async def main():
@@ -742,62 +767,52 @@ async def main():
     os.chdir(script_dir)
 
     locale.setlocale(locale.LC_ALL, '')  # Set locale based on system settings
-    paperless = None
-    try:
-        paperless = Paperless(api_url, api_token)
-        await paperless.initialize()
-    except aiohttp.ClientResponseError as e:
-        print(f"HTTP-Fehler beim Login: {e.status} {e.message}")
-    except aiohttp.ClientConnectionError:
-        print("Verbindungsfehler: Keine Verbindung zum Paperless-Server.")
-    except aiohttp.ClientError as e:
-        print(f"Allgemeiner aiohttp-Fehler: {e}")
-    except Exception as e:
-        print(f"Unerwarteter Fehler bei der Initialisierung von Paperless: {e}")
-    finally:
-        if paperless:
-            print_progress("logged in....")
-    # WENN `paperless` NICHT INITIALISIERT WURDE → ABBRUCH
-    if not paperless:
-        print("Paperless konnte nicht initialisiert werden. Beende das Skript.")
-        exit(1)
+    paperless = Paperless(api_url, api_token)
+    await retry_async(lambda: paperless.initialize(), desc="Paperless-Login")
+    print_progress("logged in....")
+
     # do something
-
     meta = await fetch_paperless_meta(paperless, progress_log_path)
-   # custom_fields_map = await get_custom_field_definitions(paperless)
-
     # Zugriff auf ein Element
-    print(meta["correspondents"][3].name)
-    print(meta["tags"][1].name)
-    print(meta["storage_paths"][2].name)
+    #print(meta["correspondents"][3].name)
+    #print(meta["tags"][1].name)
+    #print(meta["storage_paths"][2].name)
 
     try:
         for root, dirs, files in os.walk(export_dir):
-            query_value = os.path.basename(root)  # Standardwert: Verzeichnisname
-            if root == export_dir:
-                continue  # Gehe zum nächsten Durchgang, ohne das Root-Verzeichnis zu verarbeiten
+          query_value = os.path.basename(root)
+          if root == export_dir:
+            continue
 
-            # Sortiere die Verzeichnisse alphabetisch
-            dirs.sort() 
-            if '##config.ini' in files:
-                config_path = os.path.join(root, '##config.ini')
-                config = configparser.ConfigParser()
-                #config.read(config_path, encoding='utf-8')
-                config.read(config_path)
-            
-                if 'DEFAULT' in config and 'query' in config['DEFAULT']:
-                    query_value = config['DEFAULT']['query']
+          config_mtime = 0  # oder datetime.min.timestamp()
+          if '##config.ini' in files:
+              config_path = os.path.join(root, '##config.ini')
+              config = configparser.ConfigParser()
+           #   config.read(config_path)
+              config=load_config(config_path=config_path)
+              config_mtime = os.path.getmtime(config_path)
 
-            print(f"{root} {query_value}")
-            await exportThem(paperless=paperless, dir=root,query=query_value,progress_log_path=progress_log_path)
+          if 'DATA' in config and 'query' in config['DATA']:
+              query_value = config['DATA']['query']
+
+          if 'EXPORT' in config and 'export frequeny' in config['EXPORT']:
+              frequency = config['EXPORT']['export frequeny']
+          else:
+              frequency = 'daily'
+
+          should_run, reason = should_export(root, frequency, config_mtime)
+
+          if should_run:
+              print(f"\n{root} {query_value} -> doExport ({reason})")
+              await exportThem(paperless=paperless, dir=root, query=query_value, progress_log_path=progress_log_path)
+          else:
+              print(f"\n{root} {query_value} -> skipped ({reason})")
     except Exception as e:
         log_message(progress_log_path, f"Error: {str(e)}")
         raise
     finally:
-        # Log umbenennen
+        if paperless:
+            await paperless.close()
         finalize_log(progress_log_path, final_log_path)
-    await paperless.close()
-    # do something
-# see main() examples
 
 asyncio.run(main())
