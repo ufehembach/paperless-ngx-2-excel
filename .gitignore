@@ -1,0 +1,36 @@
+# === Private Konfigurationsdateien ===
+paperless-ngx-2-excel.ufe.ini
+
+# === Bytecode & Temp ===
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.progress.log
+*.tmp
+*.bak
+.DS_Store
+
+# === IDE/Editor-Dateien ===
+.vscode/
+.idea/
+*.swp
+
+# === Speziell: In _-Ordnern unter exports/ bestimmte Dateitypen ignorieren ===
+# === 1. Alle exports-Unterordner ignorieren
+exports/*
+
+# === 2. ...aber _Ordner wieder erlauben
+!exports/_*/
+
+# === 3. ...aber in _Ordnern bestimmte Dateitypen ignorieren
+exports/_*/**/*.xlsx
+exports/_*/**/*.json
+exports/_*/**/*.pdf
+
+# === Alles andere behalten ===
+!*.py
+!.gitignore
+!requirements.txt
+!VERSION
+
