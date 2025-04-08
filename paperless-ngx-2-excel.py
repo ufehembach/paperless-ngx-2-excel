@@ -3,6 +3,7 @@
 import os
 import sys
 import pwd
+#from networkx import from_prufer_sequence
 import requests
 import pandas as pd
 import inspect
@@ -105,15 +106,95 @@ def print_program_header():
     license_id = get_github_license_identifier(user, repo) if user and repo else "Unbekannt"
     github_url = f"https://github.com/{user}/{repo}" if user and repo else "(kein GitHub-Repo erkannt)"
 
-    print(f"{script_name} {version} – © 2025 {license_id} – {github_url}")
+    print(f"{script_name} {version} – © 2025 {license_id} – {github_url}", end="")
+
+def append_metadata_sheet(
+    xlsx_path,
+    script_version,
+    config_data,
+    python_packages_limit=10
+):
+    import os
+    import socket
+    import getpass
+    import platform
+    import pandas as pd
+    from datetime import datetime
+    from openpyxl import load_workbook
+    import importlib.metadata
+
+    def add_block(rows, title, entries):
+        rows.append([title, ""])
+        for key, value in entries:
+            rows.append([key, value])
+        rows.append(["", ""])
+        return rows
+
+    # === Basisinfos ===
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    base_dir = os.path.dirname(xlsx_path)
+
+    json_files = [f for f in os.listdir(base_dir) if f.endswith('.json')]
+    pdf_files = [f for f in os.listdir(base_dir) if f.endswith('.pdf')]
+    json_bytes = sum(
+        os.path.getsize(os.path.join(base_dir, f))
+        for f in json_files
+        if os.path.isfile(os.path.join(base_dir, f))
+        )
+
+    pdf_bytes = sum(
+    os.path.getsize(os.path.join(base_dir, f))
+    for f in pdf_files
+    if os.path.isfile(os.path.join(base_dir, f))
+)
+
+    xlsx_size = os.path.getsize(xlsx_path)
+
+    rows = []
+
+    rows = add_block(rows, "📝 Exportinformationen", [
+        ("Script-Version", script_version),
+        ("Export-Datum", now),
+        ("Hostname", socket.gethostname()),
+        ("Username", getpass.getuser()),
+    ])
+
+    rows = add_block(rows, "📁 Verzeichnisse & Dateigrößen", [
+        ("Verzeichnis", base_dir),
+        ("Excel-Datei", os.path.basename(xlsx_path)),
+        ("Größe (xlsx)", f"{xlsx_size/1024:.2f} KB"),
+        ("Anzahl JSON-Dateien", len(json_files)),
+        ("Bytes JSON", f"{json_bytes/1024:.2f} KB"),
+        ("Anzahl PDF-Dateien", len(pdf_files)),
+        ("Bytes PDF", f"{pdf_bytes/1024:.2f} KB"),
+    ])
+
+    rows = add_block(rows, "⚙️ Konfiguration (config.ini)", [
+        ("Query", config_data.get("query", "(leer)")),
+        ("Export Frequency", config_data.get("frequency", "(leer)")),
+    ])
+
+    installed_packages = sorted(
+      [f"{dist.metadata['Name']}=={dist.version}" for dist in importlib.metadata.distributions()]
+      )[:python_packages_limit]
+
+    rows = add_block(rows, "🐍 Python Umgebung", [
+        ("Python-Version", platform.python_version()),
+        ("Top-Module", ', '.join(installed_packages[:python_packages_limit]) + (" ..." if len(installed_packages) > python_packages_limit else "")),
+    ])
+
+    df_meta = pd.DataFrame(rows, columns=["Betreff", "Inhalt"])
+
+    with pd.ExcelWriter(xlsx_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+        df_meta.to_excel(writer, sheet_name="📊 Metadaten", index=False)
 
 def print_separator(char='#', width_ratio=2/3):
     try:
         columns = shutil.get_terminal_size().columns
     except Exception:
         columns = 80  # fallback
+    print()  # Zeilenumbruch vor dem Strich
     line_width = int(columns * width_ratio)
-    print('\n')
     print(char * line_width)
 
 def cleanup_old_files(dir_path, filename_prefix, max_count_str, pattern="log"):
@@ -129,10 +210,10 @@ def cleanup_old_files(dir_path, filename_prefix, max_count_str, pattern="log"):
     glob_pattern = os.path.join(dir_path, f"{filename_prefix}*.{pattern}")
     files = sorted(glob.glob(glob_pattern), key=os.path.getmtime)
 
-    print(f"\n[Cleanup] Suche: {glob_pattern} – gefunden: {len(files)} Dateien")
+   # print(f"\n[Cleanup] Suche: {glob_pattern} – gefunden: {len(files)} Dateien")
 
     if len(files) <= max_count:
-        print(f"[Cleanup] Nichts zu tun: {len(files)} ≤ {max_count}")
+   #     print(f"[Cleanup] Nichts zu tun: {len(files)} ≤ {max_count}")
         return
 
     while len(files) > max_count:
@@ -345,7 +426,8 @@ async def retry_async(fn, retries=3, delay=2, backoff=2,
             if attempt == retries:
                 raise
             label = f' bei "{desc}"' if desc else ''
-            print(f"[retry_async] Fehler{label}: {e} – Versuch {attempt}/{retries}, nächster in {current_delay}s...")
+            term_width = shutil.get_terminal_size((80, 20)).columns
+            print(f"\r[retry_async] Fehler{label}: {e} – Versuch {attempt}/{retries}, nächster in {current_delay}s...".ljust(term_width), end='', flush=True)
             await asyncio.sleep(current_delay)
             current_delay *= backoff
 
@@ -387,7 +469,7 @@ def should_export(export_dir: str, frequency: str, config_mtime: float) -> tuple
         expected = (last_export + timedelta(hours=4)).strftime('%Y-%m-%d %H:%M:%S')
         cond = f"> {expected}"
     elif frequency in ("daily", "weekday"):
-        expected = (last_export + timedelta(days=1)).strftime('%Y-%m-%d')
+        expected = (last_export + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
         cond = f"> {expected}"
     elif frequency == "weekly":
         expected = (last_export + timedelta(days=7)).strftime('%Y-%m-%d')
@@ -493,7 +575,8 @@ def getmeta(key, doc, meta):
 async def export_pdf(doc, working_dir):
     """Exportiert ein Dokument als PDF mit automatischem Retry."""
     sanitized_title = sanitize_filename(doc.title)
-    pdf_path = os.path.join(working_dir, f"{sanitized_title}.pdf")
+    filename = f"{doc.id}--{sanitized_title}.pdf"
+    pdf_path = os.path.join(working_dir, filename)
 
     download = await retry_async(lambda: doc.get_download(), desc=f"PDF-Download für Dokument {doc.id}")
     document_content = download.content
@@ -514,6 +597,7 @@ def sanitize_filename(filename):
     return sanitized[:255]  # Truncate to avoid overly long filenames
 
 # ----------------------
+
 def get_document_json(paperless,doc):
     api_token = paperless._token # Dein-Token
     headers = {"Authorization": f"Token {api_token}"}
@@ -529,22 +613,19 @@ def get_document_json(paperless,doc):
     else:
         raise Exception(f"Failed to fetch document metadata: {response.status_code}")
 
-# ----------------------
-def export_json(paperless,doc, working_dir):
+def export_json(paperless, doc, working_dir):
     """Export a document's metadata as JSON."""
     sanitized_title = sanitize_filename(doc.title)
-    json_path = os.path.join(working_dir, f"{sanitized_title}.json")
+    filename = f"{doc.id}--{sanitized_title}.json"
+    json_path = os.path.join(working_dir, filename)
 
-    # Holen der Metadaten des Dokuments
-    detailed_doc = get_document_json(paperless=paperless,doc=doc)
-    # Metadata ist nun ein JSON-ähnliches Dictionary, das du weiter verarbeiten oder speichern kannst
+    detailed_doc = get_document_json(paperless=paperless, doc=doc)
     with open(json_path, "w", encoding="utf-8") as json_file:
-       json.dump(detailed_doc, json_file, ensure_ascii=False, indent=4)
-
+        json.dump(detailed_doc, json_file, ensure_ascii=False, indent=4)
 
 # ---------------------- Excel Export Helpers ----------------------
 # ----------------------
-def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta,maxfiles):
+def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta,maxfiles, query, frequency):
     import pandas as pd
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
@@ -578,6 +659,10 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
 
     # Pandas DataFrame aus document_data erstellen
     df = pd.DataFrame(data)
+    if df.empty:
+        print(f"[INFO] Keine Daten gefunden, erstelle leere Excel-Datei mit Platzhalter.")
+        df = pd.DataFrame(columns=["Keine Daten vorhanden"])
+
 
     with pd.ExcelWriter(fullfilename, engine="openpyxl") as writer:
         # DataFrame in Excel schreiben (ab Zeile 3 für Daten)
@@ -622,16 +707,17 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
         formula_even = "MOD(ROW(),2)=0"
         formula_odd = "MOD(ROW(),2)<>0"
 
-        # Bereich, der formatiert werden soll
-        range_string = f"A4:{worksheet.cell(row=worksheet.max_row, column=len(df.columns)).coordinate}"
+        # Nur wenn Datenzeilen existieren (mind. Zeile 4)
+        if worksheet.max_row >= 4:
+            range_string = f"A4:{worksheet.cell(row=worksheet.max_row, column=len(df.columns)).coordinate}"
 
-        # Bedingte Formatierung für gerade Zeilen
-        rule_even = FormulaRule(formula=[formula_even], fill=light_blue_fill, font=font)
-        worksheet.conditional_formatting.add(range_string, rule_even)
+            # Gerade Zeilen
+            rule_even = FormulaRule(formula=["MOD(ROW(),2)=0"], fill=light_blue_fill, font=font)
+            worksheet.conditional_formatting.add(range_string, rule_even)
 
-        # Bedingte Formatierung für ungerade Zeilen
-        rule_odd = FormulaRule(formula=[formula_odd], fill=white_fill, font=font)
-        worksheet.conditional_formatting.add(range_string, rule_odd)
+            # Ungerade Zeilen
+            rule_odd = FormulaRule(formula=["MOD(ROW(),2)<>0"], fill=white_fill, font=font)
+            worksheet.conditional_formatting.add(range_string, rule_odd)
 
         # Hyperlinks in der ID-Spalte
         # Suche die Spalte basierend auf dem Header in Zeile 3
@@ -658,7 +744,12 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
             for cell in row:
                 cell.font = default_font
 
-
+    # Metadaten anhängen
+    append_metadata_sheet(
+        xlsx_path=fullfilename,
+        script_version=get_git_version(),
+        config_data={"query": query, "frequency": frequency}
+    )
     print(f"\nExcel-Datei erfolgreich erstellt: {fullfilename}")
 
 # ----------------------
@@ -725,7 +816,68 @@ async def collect_async_iter(aiter):
 async def search_documents(paperless, query):
     return [item async for item in paperless.documents.search(query)]
 
-async def exportThem(paperless, dir, query, progress_log_path,max_files):
+def find_cached_file(doc_id, all_dir, kind):
+    """Findet Datei im .all-Verzeichnis anhand von doc_id und Dateityp ('pdf' oder 'json')"""
+    prefix = f"{doc_id}--"
+    suffix = f".{kind}"
+    for fname in os.listdir(all_dir):
+        if fname.startswith(prefix) and fname.endswith(suffix):
+            return os.path.join(all_dir, fname)
+    return None
+
+
+def link_export_file(doc, kind, working_dir, all_dir=".all"):
+    assert kind in ("pdf", "json")
+
+    filename = f"{doc.id}--{sanitize_filename(doc.title)}.{kind}"
+    dest_path = os.path.join(working_dir, filename)
+
+    # Quelle im .all-Ordner finden
+    src_path = find_cached_file(doc.id, all_dir, kind)
+    if src_path is None:
+        raise FileNotFoundError(f"Keine {kind.upper()}-Datei für Dokument {doc.id} im .all-Verzeichnis gefunden")
+
+    # Zielverzeichnis sicherstellen
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+    # Wenn Zieldatei existiert → prüfen oder entfernen
+    if os.path.exists(dest_path):
+        try:
+            # Ist es ein Symlink und zeigt korrekt?
+            if os.path.islink(dest_path):
+                if os.path.realpath(dest_path) == os.path.realpath(src_path):
+                    return "symlink (OK)"
+                else:
+                    os.remove(dest_path)
+            # Ist es eine Hardlink oder echte Datei identisch?
+            elif os.path.samefile(dest_path, src_path):
+                return "hardlink/copy (OK)"
+            else:
+                os.remove(dest_path)
+        except Exception:
+            os.remove(dest_path)
+
+    # Jetzt sauber: versuch Symlink → Hardlink → Copy
+    try:
+        rel_path = os.path.relpath(src_path, os.path.dirname(dest_path))
+        os.symlink(rel_path, dest_path)
+        return "symlink"
+    except FileExistsError:
+        os.remove(dest_path)
+        return link_export_file(doc, kind, working_dir, all_dir)
+    except OSError:
+        try:
+            os.link(src_path, dest_path)
+            return "hardlink"
+        except FileExistsError:
+            os.remove(dest_path)
+            return link_export_file(doc, kind, working_dir, all_dir)
+        except OSError:
+            shutil.copy2(src_path, dest_path)
+            return "copy"
+
+
+async def exportThem(paperless, dir, query, progress_log_path,max_files, frequency):
     count = 0 
     """Process and export documents"""
     document_data = []
@@ -744,22 +896,18 @@ async def exportThem(paperless, dir, query, progress_log_path,max_files):
     #    desc=f"Dokumente für Query '{query}'"
     #)
 
-    for doc in tqdm(documents, desc=f"Processing documents for '{dir}/{query}'", unit="doc"):
+    for doc in tqdm(documents, desc=f"Processing documents for '{dir} with {query}'", unit="doc"):
         count += 1
 
         try:
           metadata = None
-          #  metadata = await retry_async(lambda: doc.get_metadata(), desc=f"Metadaten für Dokument {doc.id}")
+          metadata = await retry_async(lambda: doc.get_metadata(), desc=f"Metadaten für Dokument {doc.id}")
         except Exception as e:
             print(f"Metadaten für Dokument {doc.id} konnten nicht geladen werden: {e}. Überspringe dieses Dokument.")
             continue
 
         docData = doc._data
         page_count = docData['page_count']
-        documents = await retry_async(
-                lambda: collect_async_iter(paperless.documents.search(query)),
-                desc=f"Dokumente für Query '{query}'"
-                )
 
         custom_fields, doc_currency_columns = process_custom_fields(meta=meta,doc=docData)
         currency_columns.extend(doc_currency_columns)  # Speichere Currency-Felder
@@ -798,8 +946,15 @@ async def exportThem(paperless, dir, query, progress_log_path,max_files):
         document_data.append(row)
 
         # Exportiere das PDF des Dokuments
-        await export_pdf(doc, working_dir=dir)
-        export_json(paperless=paperless,doc=doc,working_dir=dir)
+        #await export_pdf(doc, working_dir=dir)
+        #export_json(paperless=paperless,doc=doc,working_dir=dir)
+        # Statt export_pdf / export_json:
+        export_dir  = os.path.dirname(dir)
+
+        method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
+        method_json = link_export_file(doc, kind="json", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
+
+     #   print_progress(f"{doc.id}: PDF → {method_pdf}, JSON → {method_json}")
 
 
     # Exportiere die gesammelten Daten nach Excel
@@ -808,11 +963,148 @@ async def exportThem(paperless, dir, query, progress_log_path,max_files):
 
     last_dir = os.path.basename(dir)
 
-
     excel_file = os.path.join(dir, f"##{last_dir}-{datetime.now().strftime('%Y%m%d')}.xlsx")
-    export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta, maxfiles=max_files)
-    log_message(progress_log_path, f"dir: {dir}, Documents exported: {len(document_data)}")
-    print(f"Exported Excel file: {excel_file}")
+    export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta, maxfiles=max_files,query=query, frequency=frequency)
+#    log_message(progress_log_path, f"dir: {dir}, Documents exported: {len(document_data)}")
+#    print(f"Exported Excel file: {excel_file}")
+
+async def single_build_all_cache(paperless, export_dir, log_path=None):
+    def log(msg):
+        if log_path:
+            log_message(log_path, msg)
+
+    all_dir = os.path.join(export_dir, ".all")
+    os.makedirs(all_dir, exist_ok=True)
+
+    doc_ids = await retry_async(lambda: paperless.documents.all(), desc="Lade Dokument-IDs")
+
+    done = 0
+    cached = 0
+    bar = tqdm(doc_ids, desc="Dokumente cachen: 0✓ / 0↓", unit="doc")
+
+    for doc_id in bar:
+        doc = await retry_async(lambda: paperless.documents(doc_id), desc=f"Hole Dokument {doc_id}")
+
+        sanitized_title = sanitize_filename(doc.title)
+        pdf_filename = f"{doc.id}--{sanitized_title}.pdf"
+        json_filename = f"{doc.id}--{sanitized_title}.json"
+        pdf_path = os.path.join(all_dir, pdf_filename)
+        json_path = os.path.join(all_dir, json_filename)
+
+        updated = False
+
+        if not os.path.exists(pdf_path):
+            await export_pdf(doc, working_dir=all_dir)
+            updated = True
+        if not os.path.exists(json_path):
+            export_json(paperless=paperless, doc=doc, working_dir=all_dir)
+            updated = True
+
+        if updated:
+            done += 1
+        else:
+            cached += 1
+
+        bar.set_description(f"Dokumente cachen: {cached}✓ / {done}↓")
+
+    print_progress(f"Cache abgeschlossen: {done} neu, {cached} übersprungen.")
+
+from pypaperless.models.generators.page import Page
+
+async def safe_document_iterator(paperless):
+    page_iter = aiter(paperless.documents.pages())
+
+    while True:
+        try:
+            page: Page = await retry_async(lambda: anext(page_iter), desc="Lade Dokument-Seite")
+        except StopAsyncIteration:
+            break
+        except Exception as e:
+            print_progress(f"Fehler beim Laden einer Seite: {e}")
+            break
+
+        for doc in page.items:
+            yield doc
+
+async def build_all_cache(paperless, export_dir, log_path=None):
+    def log(msg):
+        if log_path:
+            log_message(log_path, msg)
+
+    all_dir = os.path.join(export_dir, ".all")
+    os.makedirs(all_dir, exist_ok=True)
+
+    # Schneller Count über .all()
+    doc_ids = await retry_async(lambda: paperless.documents.all(), desc="Zähle Dokumente")
+    total = len(doc_ids)
+
+    done = 0
+    cached = 0
+    bar = tqdm(total=total, desc="Dokumente cachen: 0✓ / 0↓", unit="doc")
+
+    async for doc in safe_document_iterator(paperless):
+        sanitized_title = sanitize_filename(doc.title)
+        pdf_filename = f"{doc.id}--{sanitized_title}.pdf"
+        json_filename = f"{doc.id}--{sanitized_title}.json"
+        pdf_path = os.path.join(all_dir, pdf_filename)
+        json_path = os.path.join(all_dir, json_filename)
+
+        updated = False
+
+        if not os.path.exists(pdf_path):
+            await export_pdf(doc, working_dir=all_dir)
+            updated = True
+        if not os.path.exists(json_path):
+            export_json(paperless=paperless, doc=doc, working_dir=all_dir)
+            updated = True
+
+        if updated:
+            done += 1
+        else:
+            cached += 1
+
+        bar.update(1)
+        bar.set_description(f"Dokumente cachen: {cached}✓ / {done}↓")
+
+    bar.close()
+    print_progress(f"Cache abgeschlossen: {done} neu, {cached} übersprungen.")
+
+def extract_doc_id(filename):
+    """Extrahiere die Dokument-ID aus einem Dateinamen wie '874--irgendwas.pdf'."""
+    try:
+        return int(filename.split('--', 1)[0])
+    except (ValueError, IndexError):
+        return None
+
+async def cleanup_all_dir(paperless, all_dir, log_path=None):
+    log_message(log_path=log_path,message= "Bereinige .all-Verzeichnis...")
+
+    # Aktuelle Dokument-IDs abrufen
+    valid_doc_ids = set(await retry_async(lambda: paperless.documents.all(), desc="Lade gültige Dokument-IDs"))
+
+    removed_files = 0
+    for filename in os.listdir(all_dir):
+        if not (filename.endswith(".pdf") or filename.endswith(".json")):
+            continue
+
+        doc_id = extract_doc_id(filename)
+        if doc_id is None or doc_id not in valid_doc_ids:
+            file_path = os.path.join(all_dir, filename)
+            try:
+                os.remove(file_path)
+                removed_files += 1
+                log_message(log_path=log_path,message=f"Entfernt: {filename}")
+            except Exception as e:
+                log_message(log_path=log_path,message=f"Fehler beim Löschen von {filename}: {e}")
+
+    log_message(log_path=log_path,message=f"Bereinigung abgeschlossen: {removed_files} Datei(en) entfernt.")
+
+def is_remote_newer(remote_modified_str, local_path):
+    # Vergleiche Timestamps
+    remote_time = datetime.datetime.fromisoformat(remote_modified_str)
+    local_time = datetime.datetime.fromtimestamp(os.path.getmtime(local_path))
+    return remote_time > local_time
+
 
 async def main():
     print_program_header()
@@ -848,10 +1140,16 @@ async def main():
     #print(meta["tags"][1].name)
     #print(meta["storage_paths"][2].name)
 
+    await build_all_cache(paperless, export_dir, progress_log_path)
+    await cleanup_all_dir(paperless, all_dir=os.path.join(export_dir, ".all"), log_path=progress_log_path)
+
     try:
         for root, dirs, files in os.walk(export_dir):
           query_value = os.path.basename(root)
           if root == export_dir:
+            continue
+          allDir= export_dir + "/.all"
+          if root == allDir:
             continue
 
           config_mtime = 0  # oder datetime.min.timestamp()
@@ -878,12 +1176,12 @@ async def main():
               #print_separator('·', 0.5)      # 50% der Breite
               print_separator('=', 0.75)      # 50% der Breite
               #print(f"\n{root} {query_value} -> Export ({reason})")
-              print(f"\n{query_value} -> Export ({reason})")
-              await exportThem(paperless=paperless, dir=root, query=query_value, progress_log_path=progress_log_path,max_files=max_files)
+              print(f"\n{query_value} -> ({reason})")
+              await exportThem(paperless=paperless, dir=root, query=query_value, progress_log_path=progress_log_path,max_files=max_files,frequency=frequency)
           else:
               #print(f"\n{root} {query_value} -> NOexport ({reason})")
               print_separator('-', 0.75)      # 50% der Breite
-              print(f"\n{query_value} -> NOexport ({reason})")
+              print(f"\n{query_value} -> ({reason})")
 
     except Exception as e:
         log_message(progress_log_path, f"Error: {str(e)}")
