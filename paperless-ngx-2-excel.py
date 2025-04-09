@@ -345,8 +345,10 @@ def format_currency(value, currency_locale="de_DE.UTF-8"):
     except ValueError:
         value_float = 0.0
 
-    locale.setlocale(locale.LC_ALL, currency_locale)
-    formatted_value = locale.currency(value_float, grouping=True)
+    try:
+        formatted_value = locale.currency(value_float, grouping=True)
+    except Exception as e:
+        formatted_value = f"{value_float:.2f}"
     return formatted_value
 
 # ----------------------
@@ -1128,7 +1130,15 @@ async def main():
     script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
     os.chdir(script_dir)
 
-    locale.setlocale(locale.LC_ALL, '')  # Set locale based on system settings
+# Setze Locale früh im Programm (fallback auf Standard-Locale)
+    try:
+        locale.setlocale(locale.LC_ALL, 'de_DE.UTF-8')
+    except locale.Error:
+        try:
+            locale.setlocale(locale.LC_ALL, '')
+        except:
+            print("⚠️ Locale konnte nicht gesetzt werden – Formatierung ggf. fehlerhaft.")
+
     paperless = Paperless(api_url, api_token)
     await retry_async(lambda: paperless.initialize(), desc="Paperless-Login")
     print_progress("logged in....")
