@@ -70,6 +70,7 @@ LOG_PATH = None  # Wird beim Log-Setup gesetzt
 _final_log_path = None
 _last_message_was_inline = False  # Verfolgt, ob vorherige Ausgabe inline war
 
+
 def message(text: str, target: str = "both", level: str = "info", inline: bool = False):
     global _last_message_was_inline
 
@@ -82,9 +83,9 @@ def message(text: str, target: str = "both", level: str = "info", inline: bool =
     full_message = f"{prefix} {text}"
 
     # Wenn letzte Ausgabe inline war, füge einen echten Zeilenumbruch ein
-    # if not inline and _last_message_was_inline:
-    #     print()
-    #     _last_message_was_inline = False
+    if not inline and _last_message_was_inline:
+        print()
+        _last_message_was_inline = False
 
     if inline:
         print(full_message, end='\r', flush=True)
@@ -96,8 +97,14 @@ def message(text: str, target: str = "both", level: str = "info", inline: bool =
 
     if target in ("log", "both") and LOG_PATH:
         try:
+            # Kontextinfo für Log-Nachricht
+            frame = inspect.currentframe().f_back
+            filename = os.path.basename(frame.f_code.co_filename)
+            line_number = frame.f_lineno
+            function_name = frame.f_code.co_name
+            context = f"{filename}:{line_number} [{function_name}]"
             with open(LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(f"{datetime.now()} - {full_message}\n")
+                f.write(f"{datetime.now()} - {context} {full_message}\n")
         except Exception as e:
             print(f"⚠️ Fehler beim Schreiben ins Log: {e}")
 
@@ -112,7 +119,7 @@ def mask_secret(secret: str, show: int = 4) -> str:
         return "*" * len(secret)
     return f"{secret[:show]}{'*' * (len(secret) - 2 * show)}{secret[-show:]}"
 
-def cleanup_old_files(dir_path, filename_prefix, max_count_str, pattern="log"):
+def xxcleanup_old_files(dir_path, filename_prefix, max_count_str, pattern="log"):
     max_count = int(max_count_str)
     glob_pattern = os.path.join(dir_path, f"{filename_prefix}*.{pattern}")
     files = sorted(glob.glob(glob_pattern), key=os.path.getmtime)
