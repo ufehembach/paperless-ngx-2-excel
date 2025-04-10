@@ -60,6 +60,111 @@ import urllib.request
 import json
 import re
 
+# Neue zentrale message-Funktion + globale LOG_PATH Variable
+
+from datetime import datetime
+import os
+import atexit
+
+LOG_PATH = None  # Wird beim Log-Setup gesetzt
+_final_log_path = None
+_last_message_was_inline = False  # Verfolgt, ob vorherige Ausgabe inline war
+
+def message(text: str, target: str = "both", level: str = "info", inline: bool = False):
+    global _last_message_was_inline
+
+    prefix = {
+        "info": "➕",
+        "warn": "⚠️",
+        "error": "❌"
+    }.get(level, "➕")
+
+    full_message = f"{prefix} {text}"
+
+    # Wenn letzte Ausgabe inline war, füge einen echten Zeilenumbruch ein
+    # if not inline and _last_message_was_inline:
+    #     print()
+    #     _last_message_was_inline = False
+
+    if inline:
+        print(full_message, end='\r', flush=True)
+        _last_message_was_inline = True
+        return
+
+    if target in ("console", "both"):
+        print(full_message)
+
+    if target in ("log", "both") and LOG_PATH:
+        try:
+            with open(LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now()} - {full_message}\n")
+        except Exception as e:
+            print(f"⚠️ Fehler beim Schreiben ins Log: {e}")
+
+def set_log_path(path: str):
+    global LOG_PATH
+    LOG_PATH = path
+    message(f"Log-Dateipfad gesetzt: {path}", target="console", level="info")
+
+def mask_secret(secret: str, show: int = 4) -> str:
+    """Maskiert einen String, zeigt nur die ersten und letzten Zeichen."""
+    if not secret or len(secret) <= show * 2:
+        return "*" * len(secret)
+    return f"{secret[:show]}{'*' * (len(secret) - 2 * show)}{secret[-show:]}"
+
+def cleanup_old_files(dir_path, filename_prefix, max_count_str, pattern="log"):
+    max_count = int(max_count_str)
+    glob_pattern = os.path.join(dir_path, f"{filename_prefix}*.{pattern}")
+    files = sorted(glob.glob(glob_pattern), key=os.path.getmtime)
+    message(f"[Cleanup] Suche: {glob_pattern} – gefunden: {len(files)} Dateien", target="log")
+    if len(files) <= max_count:
+        message(f"[Cleanup] Nichts zu tun: {len(files)} ≤ {max_count}", target="log")
+        return
+    while len(files) > max_count:
+        old_file = files.pop(0)
+        try:
+            os.remove(old_file)
+            message(f"[Cleanup] Datei gelöscht: {old_file}", target="log")
+        except OSError as e:
+            message(f"[Cleanup] Fehler beim Löschen von {old_file}: {e}", level="warn", target="log")
+
+def get_log_filename(script_name, log_dir, suffix="progress"):
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    ext = "log" if suffix == "log" else f"{suffix}.log"
+    return os.path.join(log_dir, f"##{script_name}__{timestamp}.{ext}")
+
+def initialize_log(log_dir, script_name, max_files):
+    final_log_path = get_log_filename(script_name, log_dir, "log")
+    progress_log_path = get_log_filename(script_name, log_dir, "progress")
+    if os.path.exists(final_log_path):
+        with open(progress_log_path, "w") as new_log, open(final_log_path, "r") as old_log:
+            shutil.copyfileobj(old_log, new_log)
+        os.remove(final_log_path)
+    else:
+        open(progress_log_path, "w").close()
+    cleanup_old_files(log_dir, "##" + script_name, max_files)
+    return progress_log_path, final_log_path
+
+def finalize_log():
+    global LOG_PATH, _final_log_path
+    if LOG_PATH and _final_log_path and os.path.exists(LOG_PATH):
+        os.rename(LOG_PATH, _final_log_path)
+        message("Log-Datei finalisiert.", target="console")
+
+def prepare_logging(log_dir, script_name, max_files):
+    global _final_log_path
+    progress_log_path, final_log_path = initialize_log(log_dir, script_name, max_files)
+    _final_log_path = final_log_path
+    set_log_path(progress_log_path)
+    atexit.register(finalize_log)
+
+# Beispielverwendung nach Initialisierung:
+# set_log_path("pfad/zur/logdatei.log")
+# message("Export gestartet", target="both")
+# message("Dokument konnte nicht geladen werden", level="warn")
+# message("Verarbeite Dokument 17", inline=True)
+
+
 def get_git_version(default="v0.0.0"):
     try:
         version = subprocess.check_output(
@@ -233,7 +338,7 @@ def get_log_filename(script_name, log_dir, suffix="progress"):
         return os.path.join(log_dir, f"##{script_name}__{timestamp}.{suffix}.log")
 
 # ----------------------
-def initialize_log(log_dir, script_name, max_files):
+def X_initialize_log(log_dir, script_name, max_files):
     final_log_path = get_log_filename(script_name, log_dir, "log")
     progress_log_path = get_log_filename(script_name, log_dir, "progress")
     
@@ -252,12 +357,12 @@ def initialize_log(log_dir, script_name, max_files):
 
 # Funktion, um das Log umzubenennen
 # ----------------------
-def finalize_log(progress_log_path, final_log_path):
+def X_finalize_log(progress_log_path, final_log_path):
     if os.path.exists(progress_log_path):
         os.rename(progress_log_path, final_log_path)
 
 # ----------------------
-def print_progress(message: str):
+def X_message(message: str):
     frame = inspect.currentframe().f_back
     filename = os.path.basename(frame.f_code.co_filename)
     line_number = frame.f_lineno
@@ -265,22 +370,22 @@ def print_progress(message: str):
 
     progress_message = f"{filename}:{line_number} [{function_name}] {message}"
 
-    if not hasattr(print_progress, "_last_length"):
-        print_progress._last_length = 0
+    if not hasattr(message, "_last_length"):
+        message._last_length = 0
 
-    clear_space = max(print_progress._last_length - len(progress_message), 0)
+    clear_space = max(message._last_length - len(progress_message), 0)
     progress_message += " " * clear_space
 
     sys.stdout.write(f"\r{progress_message}")
     sys.stdout.flush()
 
-    print_progress._last_length = len(progress_message)
+    message._last_length = len(progress_message)
 
 # ---------------------- Configuration Loading ----------------------
 # ----------------------
 def load_config(config_path):
     """Lädt eine INI-Konfigurationsdatei, gibt None zurück bei Fehlern."""
-    #print_progress("process...")
+    #message("process...")
     config = configparser.ConfigParser()
     try:
         config.read(config_path)
@@ -303,23 +408,15 @@ def load_config_from_script():
 
     # Try to load the .ufe.ini file first
     if os.path.exists(ufe_ini_path):
-        print_progress(f"Using config file: {ufe_ini_path}")
+        message(f"Using config file: {ufe_ini_path}")
         return load_config(ufe_ini_path)
     # Fallback to the .ini file
     elif os.path.exists(ini_path):
-        print_progress(f"Using config file: {ini_path}")
+        message(f"Using config file: {ini_path}")
         return load_config(ini_path)
     else:
         print(f"Configuration files '{ufe_ini_path}' and '{ini_path}' not found.")
         sys.exit(1)
-
-
-# ---------------------- Logging ----------------------
-def log_message(log_path, message):
-    """Append a log message to the log file."""
-    with open(log_path, "a") as log_file:
-        log_file.write(f"{datetime.now()} - {message}\n")
-
 
 # ----------------------
 def parse_currency(value):
@@ -398,7 +495,7 @@ def parse_date(date_input):
     sonst im Format '%d.%m.%Y %H:%M'. Akzeptiert Strings oder datetime-Objekte.
     """
     if not date_input:
-        print_progress(f"[parse_date] Date input is empty or None: {date_input}")
+        message(f"[parse_date] Date input is empty or None: {date_input}")
         return None
 
     try:
@@ -413,7 +510,7 @@ def parse_date(date_input):
             return parsed_date.strftime("%d.%m.%Y %H:%M")
 
     except Exception as e:
-        print_progress(f"[parse_date] Failed to parse date '{date_input}': {e}")
+        message(f"[parse_date] Failed to parse date '{date_input}': {e}")
         return None
 
 # ----------------------
@@ -508,15 +605,14 @@ async def get_dict_from_paperless(endpoint):
 _paperless_meta_cache = None
 
 
-async def fetch_paperless_meta(paperless, log_path, force_reload=False):
+async def fetch_paperless_meta(paperless, force_reload=False):
     global _paperless_meta_cache
 
     if _paperless_meta_cache is not None and not force_reload:
         return _paperless_meta_cache
 
     def log_and_print(name):
-        log_message(log_path, f"getting {name}...")
-        print_progress(message=f"getting {name}...")
+        message(text=f"getting {name}...",inline=True)
 
     meta = {}
 
@@ -528,13 +624,12 @@ async def fetch_paperless_meta(paperless, log_path, force_reload=False):
         "users": paperless.users,
         "custom_fields": paperless.custom_fields
     }.items():
-        log_and_print(name)
+        message(f"{name}",inline=True)
         try:
             meta[name] = await get_dict_from_paperless(endpoint)
-            print(f"{name.capitalize()}: {len(meta[name])}")
+            message(f"{name.capitalize()}: {len(meta[name])}")
         except Exception as e:
-            print(f"Fehler beim Abrufen von {name}: {e}")
-            log_message(log_path, f"Fehler beim Abrufen von {name}: {e}")
+            message( f"Fehler beim Abrufen von {name}: {e}")
             meta[name] = []  # Leere Liste als Fallback, damit getmeta nicht crasht
 
     _paperless_meta_cache = meta
@@ -752,7 +847,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
         script_version=get_git_version(),
         config_data={"query": query, "frequency": frequency}
     )
-    print(f"\nExcel-Datei erfolgreich erstellt: {fullfilename}")
+    message(f"\nExcel-Datei erfolgreich erstellt: {fullfilename}")
 
 # ----------------------
 def has_file_from_today(directory):
@@ -879,13 +974,13 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
             return "copy"
 
 
-async def exportThem(paperless, dir, query, progress_log_path,max_files, frequency):
+async def exportThem(paperless, dir, query, max_files, frequency):
     count = 0 
     """Process and export documents"""
     document_data = []
     currency_columns = []  # Liste zur Speicherung aller Currency-Felder
     custom_fields = {}
-    meta = await fetch_paperless_meta(paperless, progress_log_path)
+    meta = await fetch_paperless_meta(paperless)
 
 #    documents = [item async for item in paperless.documents.search(query)]
     documents = await retry_async(
@@ -910,11 +1005,11 @@ async def exportThem(paperless, dir, query, progress_log_path,max_files, frequen
 
         docData = doc._data
         page_count = docData['page_count']
+        message(f"{doc.id} {doc.title} {page_count} pages",target="log")
 
         custom_fields, doc_currency_columns = process_custom_fields(meta=meta,doc=docData)
         currency_columns.extend(doc_currency_columns)  # Speichere Currency-Felder
         thisTags =  getmeta("tags", doc, meta=meta)
-
 
         # Daten für die Excel-Tabelle sammeln
         row = OrderedDict([
@@ -953,10 +1048,11 @@ async def exportThem(paperless, dir, query, progress_log_path,max_files, frequen
         # Statt export_pdf / export_json:
         export_dir  = os.path.dirname(dir)
 
-        method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
+        method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=os.path.join(export_dir, ".all")) 
         method_json = link_export_file(doc, kind="json", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
 
-     #   print_progress(f"{doc.id}: PDF → {method_pdf}, JSON → {method_json}")
+        message(f"{doc.id}: PDF → {method_pdf}",target="log")
+        message(f"{doc.id}: json → {method_json}", target="log")
 
 
     # Exportiere die gesammelten Daten nach Excel
@@ -973,7 +1069,7 @@ async def exportThem(paperless, dir, query, progress_log_path,max_files, frequen
 async def single_build_all_cache(paperless, export_dir, log_path=None):
     def log(msg):
         if log_path:
-            log_message(log_path, msg)
+            message( msg)
 
     all_dir = os.path.join(export_dir, ".all")
     os.makedirs(all_dir, exist_ok=True)
@@ -1009,7 +1105,7 @@ async def single_build_all_cache(paperless, export_dir, log_path=None):
 
         bar.set_description(f"Dokumente cachen: {cached}✓ / {done}↓")
 
-    print_progress(f"Cache abgeschlossen: {done} neu, {cached} übersprungen.")
+    message(f"Cache abgeschlossen: {done} neu, {cached} übersprungen.")
 
 from pypaperless.models.generators.page import Page
 
@@ -1022,7 +1118,7 @@ async def safe_document_iterator(paperless):
         except StopAsyncIteration:
             break
         except Exception as e:
-            print_progress(f"Fehler beim Laden einer Seite: {e}")
+            message(f"Fehler beim Laden einer Seite: {e}")
             break
 
         for doc in page.items:
@@ -1031,7 +1127,7 @@ async def safe_document_iterator(paperless):
 async def build_all_cache(paperless, export_dir, log_path=None):
     def log(msg):
         if log_path:
-            log_message(log_path, msg)
+            message( msg)
 
     all_dir = os.path.join(export_dir, ".all")
     os.makedirs(all_dir, exist_ok=True)
@@ -1069,7 +1165,7 @@ async def build_all_cache(paperless, export_dir, log_path=None):
         bar.set_description(f"Dokumente cachen: {cached}✓ / {done}↓")
 
     bar.close()
-    print_progress(f"Cache abgeschlossen: {done} neu, {cached} übersprungen.")
+    message(f"Cache abgeschlossen: {done} neu, {cached} übersprungen.")
 
 def extract_doc_id(filename):
     """Extrahiere die Dokument-ID aus einem Dateinamen wie '874--irgendwas.pdf'."""
@@ -1079,7 +1175,7 @@ def extract_doc_id(filename):
         return None
 
 async def cleanup_all_dir(paperless, all_dir, log_path=None):
-    log_message(log_path=log_path,message= "Bereinige .all-Verzeichnis...")
+    message( "Bereinige .all-Verzeichnis...")
 
     # Aktuelle Dokument-IDs abrufen
     valid_doc_ids = set(await retry_async(lambda: paperless.documents.all(), desc="Lade gültige Dokument-IDs"))
@@ -1095,11 +1191,11 @@ async def cleanup_all_dir(paperless, all_dir, log_path=None):
             try:
                 os.remove(file_path)
                 removed_files += 1
-                log_message(log_path=log_path,message=f"Entfernt: {filename}")
+                message(f"Entfernt: {filename}")
             except Exception as e:
-                log_message(log_path=log_path,message=f"Fehler beim Löschen von {filename}: {e}")
+                message(message=f"Fehler beim Löschen von {filename}: {e}")
 
-    log_message(log_path=log_path,message=f"Bereinigung abgeschlossen: {removed_files} Datei(en) entfernt.")
+    message(text=f"Bereinigung abgeschlossen: {removed_files} Datei(en) entfernt.")
 
 def is_remote_newer(remote_modified_str, local_path):
     # Vergleiche Timestamps
@@ -1107,14 +1203,37 @@ def is_remote_newer(remote_modified_str, local_path):
     local_time = datetime.datetime.fromtimestamp(os.path.getmtime(local_path))
     return remote_time > local_time
 
-
 async def main():
     print_program_header()
+    print_separator('=', 0.75)
 
-    print_separator('=', 0.75)      # 50% der Breite
     script_name = get_script_name()
     config = load_config_from_script()
 
+    # 🔍 Pflichtfelder prüfen
+    required = {
+        "API": ["url", "token"],
+        "Export": ["directory"],
+        "Log": ["log_file", "max_files"]
+    }
+
+    missing = []
+    for section, keys in required.items():
+        if not config.has_section(section):
+            missing.append(f"[{section}] fehlt")
+            continue
+        for key in keys:
+            if not config.has_option(section, key) or not config.get(section, key).strip():
+                missing.append(f"{section}.{key} fehlt oder ist leer")
+
+    if missing:
+        print("\n❌ Fehler in der Konfigurationsdatei:")
+        for m in missing:
+            print(f"   - {m}")
+        print("\n💡 Bitte prüfe deine .ini-Datei und ergänze die fehlenden Angaben.")
+        sys.exit(1)
+
+    # ✅ Nur wenn alles ok ist: Konfigurationswerte lesen
     export_dir = config.get("Export", "directory")
     api_url = config.get("API", "url")
     api_token = config.get("API", "token")
@@ -1122,9 +1241,13 @@ async def main():
     max_files = config.get("Log", "max_files")
 
     # Log-Dateien initialisieren
-    progress_log_path, final_log_path = initialize_log(log_dir, script_name, max_files=max_files)
-    log_message(progress_log_path, message="Log in...")
-    print_progress( message="Log in...")
+    prepare_logging(log_dir, script_name, max_files)
+
+    # Beispielverwendung nach Initialisierung:
+    # set_log_path("pfad/zur/logdatei.log")
+    # message("Export gestartet", target="both")
+    # message("Dokument konnte nicht geladen werden", level="warn")
+    # message("Verarbeite Dokument 17", inline=True)
 
 # Setze das Arbeitsverzeichnis auf das Verzeichnis, in dem das Skript gespeichert ist
     script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
@@ -1139,19 +1262,20 @@ async def main():
         except:
             print("⚠️ Locale konnte nicht gesetzt werden – Formatierung ggf. fehlerhaft.")
 
+    message(f"Log in to {api_url} with {mask_secret(api_token)} ..", target="both")
     paperless = Paperless(api_url, api_token)
     await retry_async(lambda: paperless.initialize(), desc="Paperless-Login")
-    print_progress("logged in....")
+    message("Logged in", target="both")
 
     # do something
-    meta = await fetch_paperless_meta(paperless, progress_log_path)
+    meta = await fetch_paperless_meta(paperless)
     # Zugriff auf ein Element
     #print(meta["correspondents"][3].name)
     #print(meta["tags"][1].name)
     #print(meta["storage_paths"][2].name)
 
-    await build_all_cache(paperless, export_dir, progress_log_path)
-    await cleanup_all_dir(paperless, all_dir=os.path.join(export_dir, ".all"), log_path=progress_log_path)
+    await build_all_cache(paperless, export_dir)
+    await cleanup_all_dir(paperless, all_dir=os.path.join(export_dir, ".all"))
 
     try:
         for root, dirs, files in os.walk(export_dir):
@@ -1186,19 +1310,19 @@ async def main():
               #print_separator('·', 0.5)      # 50% der Breite
               print_separator('=', 0.75)      # 50% der Breite
               #print(f"\n{root} {query_value} -> Export ({reason})")
-              print(f"\n{query_value} -> ({reason})")
-              await exportThem(paperless=paperless, dir=root, query=query_value, progress_log_path=progress_log_path,max_files=max_files,frequency=frequency)
+              message(f"{query_value} -> ({reason})", target="both")
+              await exportThem(paperless=paperless, dir=root, query=query_value, max_files=max_files,frequency=frequency)
           else:
               #print(f"\n{root} {query_value} -> NOexport ({reason})")
               print_separator('-', 0.75)      # 50% der Breite
-              print(f"\n{query_value} -> ({reason})")
+              message(f"{query_value} -> ({reason})", target="both")
 
     except Exception as e:
-        log_message(progress_log_path, f"Error: {str(e)}")
+        message(f"Error: {str(e)}", target="both")
         raise
     finally:
         if paperless:
             await paperless.close()
-        finalize_log(progress_log_path, final_log_path)
+        #finalize_log(progress_log_path, final_log_path)
 
 asyncio.run(main())
