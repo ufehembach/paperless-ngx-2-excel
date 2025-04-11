@@ -258,7 +258,7 @@ def append_metadata_sheet(
     os.path.getsize(os.path.join(base_dir, f))
     for f in pdf_files
     if os.path.isfile(os.path.join(base_dir, f))
-)
+        )
 
     xlsx_size = os.path.getsize(xlsx_path)
 
@@ -344,52 +344,7 @@ def get_log_filename(script_name, log_dir, suffix="progress"):
     else:
         return os.path.join(log_dir, f"##{script_name}__{timestamp}.{suffix}.log")
 
-# ----------------------
-def X_initialize_log(log_dir, script_name, max_files):
-    final_log_path = get_log_filename(script_name, log_dir, "log")
-    progress_log_path = get_log_filename(script_name, log_dir, "progress")
-    
-    # Falls ein vorheriges Log existiert, es in die neue Log-Datei kopieren
-    if os.path.exists(final_log_path):
-        with open(progress_log_path, "w") as new_log, open(final_log_path, "r") as old_log:
-            shutil.copyfileobj(old_log, new_log)
-        os.remove(final_log_path)
-    else:
-        open(progress_log_path, "w").close()  # Erstelle eine leere Log-Datei
-    
-    # Aufräumen: Älteste Logs löschen, falls nötig
-    cleanup_old_files(log_dir, "##"+script_name, max_files)
-
-    return progress_log_path, final_log_path
-
-# Funktion, um das Log umzubenennen
-# ----------------------
-def X_finalize_log(progress_log_path, final_log_path):
-    if os.path.exists(progress_log_path):
-        os.rename(progress_log_path, final_log_path)
-
-# ----------------------
-def X_message(message: str):
-    frame = inspect.currentframe().f_back
-    filename = os.path.basename(frame.f_code.co_filename)
-    line_number = frame.f_lineno
-    function_name = frame.f_code.co_name
-
-    progress_message = f"{filename}:{line_number} [{function_name}] {message}"
-
-    if not hasattr(message, "_last_length"):
-        message._last_length = 0
-
-    clear_space = max(message._last_length - len(progress_message), 0)
-    progress_message += " " * clear_space
-
-    sys.stdout.write(f"\r{progress_message}")
-    sys.stdout.flush()
-
-    message._last_length = len(progress_message)
-
 # ---------------------- Configuration Loading ----------------------
-# ----------------------
 def load_config(config_path):
     """Lädt eine INI-Konfigurationsdatei, gibt None zurück bei Fehlern."""
     #message("process...")
@@ -435,7 +390,6 @@ def parse_currency(value):
     except Exception as e:
         # print(f"Fehler beim Parsen des Währungswerts '{value}': {e}")
         return 0.0  # Fallback auf 0 bei Fehlern
-
 
 # ----------------------
 def format_currency(value, currency_locale="de_DE.UTF-8"):
@@ -561,7 +515,6 @@ def should_export(export_dir: str, frequency: str, config_mtime: float) -> tuple
             f"(INI: {config_time}, XLSX: {xlsx_time})"
         )
     
-
     now = datetime.now()
     last_export = datetime.fromtimestamp(latest_xlsx_mtime)
     frequency = frequency.lower().strip()
@@ -569,6 +522,9 @@ def should_export(export_dir: str, frequency: str, config_mtime: float) -> tuple
     readable_time = last_export.strftime('%Y-%m-%d %H:%M:%S')
     # Bedingung beschreiben
     if frequency == "hourly":
+        expected = (last_export + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+        cond = f"> {expected}"
+    elif frequency == "hourly":
         expected = (last_export + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
         cond = f"> {expected}"
     elif frequency == "4hourly":
@@ -610,7 +566,6 @@ async def get_dict_from_paperless(endpoint):
     return item_dict  # Gibt ein Dictionary {ID: Objekt} zurück
 # Modulweiter Cache (z. B. ganz oben im Script)
 _paperless_meta_cache = None
-
 
 async def fetch_paperless_meta(paperless, force_reload=False):
     global _paperless_meta_cache
@@ -944,6 +899,9 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     # Zielverzeichnis sicherstellen
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
+    message(f"from:  {src_path}","both") 
+    message(f"to:    {dest_path}","both") 
+
     # Wenn Zieldatei existiert → prüfen oder entfernen
     if os.path.exists(dest_path):
         try:
@@ -1272,7 +1230,9 @@ async def main():
     message(f"Log in to {api_url} with {mask_secret(api_token)} ..", target="both")
     paperless = Paperless(api_url, api_token)
     await retry_async(lambda: paperless.initialize(), desc="Paperless-Login")
+    
     message("Logged in", target="both")
+    message(f"Export to {export_dir}", target="both")
 
     # do something
     meta = await fetch_paperless_meta(paperless)
