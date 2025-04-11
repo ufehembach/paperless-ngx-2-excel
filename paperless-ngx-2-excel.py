@@ -892,7 +892,9 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     dest_path = os.path.join(working_dir, filename)
 
     # Quelle im .all-Ordner finden
-    src_path = find_cached_file(doc.id, all_dir, kind)
+    message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}",target="both")
+
+    src_path = find_cached_file(doc.id, all_dir=all_dir, kind=kind)
     if src_path is None:
         raise FileNotFoundError(f"Keine {kind.upper()}-Datei für Dokument {doc.id} im .all-Verzeichnis gefunden")
 
@@ -1264,8 +1266,8 @@ async def main():
           if 'DATA' in config and 'query' in config['DATA']:
               query_value = config['DATA']['query']
 
-          if 'EXPORT' in config and 'export frequeny' in config['EXPORT']:
-              frequency = config['EXPORT']['export frequeny']
+          if 'EXPORT' in config and 'frequency' in config['EXPORT']:
+              frequency = config['EXPORT']['frequency']
           else:
               frequency = 'daily'
 
