@@ -83,9 +83,9 @@ def message(text: str, target: str = "both", level: str = "info", inline: bool =
     full_message = f"{prefix} {text}"
 
     # Wenn letzte Ausgabe inline war, füge einen echten Zeilenumbruch ein
-    if not inline and _last_message_was_inline:
-        print()
-        _last_message_was_inline = False
+    # if not inline and _last_message_was_inline:
+    #     print()
+    #     _last_message_was_inline = False
 
     if inline:
         print(full_message, end='\r', flush=True)
@@ -522,29 +522,46 @@ def should_export(export_dir: str, frequency: str, config_mtime: float) -> tuple
     readable_time = last_export.strftime('%Y-%m-%d %H:%M:%S')
     # Bedingung beschreiben
     if frequency == "hourly":
-        expected = (last_export + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
-        cond = f"> {expected}"
-    elif frequency == "hourly":
-        expected = (last_export + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
-        cond = f"> {expected}"
+        next_export = last_export + timedelta(hours=1)
+        if now > next_export:
+            return True, f"hourly: last={readable_time}, next={next_export}, now={now}"
+        else:
+            return False, f"noExport: hourly until {next_export.strftime('%Y-%m-%d %H:%M:%S')}"
+    
     elif frequency == "4hourly":
-        expected = (last_export + timedelta(hours=4)).strftime('%Y-%m-%d %H:%M:%S')
-        cond = f"> {expected}"
-    elif frequency in ("daily", "weekday"):
-        expected = (last_export + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
-        cond = f"> {expected}"
-    elif frequency == "weekly":
-        expected = (last_export + timedelta(days=7)).strftime('%Y-%m-%d')
-        cond = f"> {expected}"
-    elif frequency == "monthly":
-        expected = f"{last_export.year}-{(last_export.month % 12) + 1:02d}"
-        cond = f"Monat != {last_export.strftime('%Y-%m')}"
-    elif frequency == "yearly":
-        expected = f"{last_export.year + 1}"
-        cond = f"Jahr != {last_export.year}"
-    else:
-        cond = "Unbekannt"
+        next_export = last_export + timedelta(hours=4)
+        if now > next_export:
+            return True, f"4hourly: last={readable_time}, next={next_export}, now={now}"
+        else:
+            return False, f"noExport: 4hourly until {next_export.strftime('%Y-%m-%d %H:%M:%S')}"
 
+    elif frequency in ("daily", "weekday"):
+        next_export = last_export + timedelta(days=1)
+        if now > next_export:
+            return True, f"daily: last={readable_time}, next={next_export}, now={now}"
+        else:
+            return False, f"noExport: daily until {next_export.strftime('%Y-%m-%d %H:%M:%S')}"
+    
+    elif frequency == "weekly":
+        next_export = last_export + timedelta(days=7)
+        if now > next_export:
+            return True, f"weekly: last={readable_time}, next={next_export}, now={now}"
+        else:
+            return False, f"noExport: weekly until {next_export.strftime('%Y-%m-%d')}"
+    
+    elif frequency == "monthly":
+        next_month = (last_export.replace(day=1) + timedelta(days=32)).replace(day=1)
+        if now > next_month:
+            return True, f"monthly: last={last_export.strftime('%Y-%m')}, next={next_month.strftime('%Y-%m')}, now={now.strftime('%Y-%m-%d')}"
+        else:
+            return False, f"noExport: monthly until {next_month.strftime('%Y-%m-%d')}"
+
+    elif frequency == "yearly":
+        next_year = datetime(last_export.year + 1, 1, 1)
+        if now > next_year:
+            return True, f"yearly: last={last_export.year}, next={next_year.year}, now={now.year}"
+        else:
+            return False, f"noExport: yearly until {next_year.year}"
     return False, (
         f"noExport: last file {readable_time}, "
         f"Frequenz '{frequency}': {cond}"
@@ -892,7 +909,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     dest_path = os.path.join(working_dir, filename)
 
     # Quelle im .all-Ordner finden
-    message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}",target="both")
+    #message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}",target="both")
 
     src_path = find_cached_file(doc.id, all_dir=all_dir, kind=kind)
     if src_path is None:
@@ -901,8 +918,8 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     # Zielverzeichnis sicherstellen
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
-    message(f"from:  {src_path}","both") 
-    message(f"to:    {dest_path}","both") 
+    #message(f"from:  {src_path}","both") 
+    #message(f"to:    {dest_path}","both") 
 
     # Wenn Zieldatei existiert → prüfen oder entfernen
     if os.path.exists(dest_path):
@@ -1279,12 +1296,12 @@ async def main():
               #print_separator('·', 0.5)      # 50% der Breite
               print_separator('=', 0.75)      # 50% der Breite
               #print(f"\n{root} {query_value} -> Export ({reason})")
-              message(f"{query_value} -> ({reason})", target="both")
+              message(f"{root} : {query_value} -> ({reason})", target="both")
               await exportThem(paperless=paperless, dir=root, query=query_value, max_files=max_files,frequency=frequency)
           else:
               #print(f"\n{root} {query_value} -> NOexport ({reason})")
               print_separator('-', 0.75)      # 50% der Breite
-              message(f"{query_value} -> ({reason})", target="both")
+              message(f"{root} : {query_value} -> ({reason})", target="both")
 
     except Exception as e:
         message(f"Error: {str(e)}", target="both")
