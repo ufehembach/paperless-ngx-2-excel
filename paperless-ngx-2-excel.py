@@ -1263,13 +1263,12 @@ async def main():
     await build_all_cache(paperless, export_dir)
     await cleanup_all_dir(paperless, all_dir=os.path.join(export_dir, ".all"))
 
+    excluded_dirs = {"@eaDir", ".all"}
     try:
         for root, dirs, files in os.walk(export_dir):
           query_value = os.path.basename(root)
+          dirs[:] = [d for d in dirs if d not in excluded_dirs]
           if root == export_dir:
-            continue
-          allDir= export_dir + "/.all"
-          if root == allDir:
             continue
 
           config_mtime = 0  # oder datetime.min.timestamp()
