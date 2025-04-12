@@ -909,7 +909,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     dest_path = os.path.join(working_dir, filename)
 
     # Quelle im .all-Ordner finden
-    #message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}",target="both")
+    message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}",target="both")
 
     src_path = find_cached_file(doc.id, all_dir=all_dir, kind=kind)
     if src_path is None:
@@ -918,8 +918,8 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     # Zielverzeichnis sicherstellen
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
-    #message(f"from:  {src_path}","both") 
-    #message(f"to:    {dest_path}","both") 
+    message(f"from:  {src_path}","both") 
+    message(f"to:    {dest_path}","both") 
 
     # Wenn Zieldatei existiert → prüfen oder entfernen
     if os.path.exists(dest_path):
@@ -954,6 +954,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
             os.remove(dest_path)
             return link_export_file(doc, kind, working_dir, all_dir)
         except OSError:
+            message(f"shutil.copy2({src_path}, {dest_path}")
             shutil.copy2(src_path, dest_path)
             return "copy"
 
