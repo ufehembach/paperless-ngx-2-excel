@@ -944,7 +944,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     # Auf Synology: direkt kopieren
     if is_synology():
         try:
-            t message("Synology erkannt – verwende Kopie statt Symlink/Hardlink", "both")
+            message("Synology erkannt – verwende Kopie statt Symlink/Hardlink", "both")
             shutil.copy2(src_path, dest_path)
             if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
                 return "copy (synology)"
