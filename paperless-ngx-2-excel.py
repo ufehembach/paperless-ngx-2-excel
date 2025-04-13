@@ -901,8 +901,66 @@ def find_cached_file(doc_id, all_dir, kind):
             return os.path.join(all_dir, fname)
     return None
 
+import os
+import shutil
 
 def link_export_file(doc, kind, working_dir, all_dir=".all"):
+    assert kind in ("pdf", "json")
+
+    filename = f"{doc.id}--{sanitize_filename(doc.title)}.{kind}"
+    dest_path = os.path.join(working_dir, filename)
+
+    # Quelle im .all-Ordner finden
+    message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}", target="both")
+    src_path = find_cached_file(doc.id, all_dir=all_dir, kind=kind)
+    if src_path is None:
+        raise FileNotFoundError(f"Keine {kind.upper()}-Datei für Dokument {doc.id} im .all-Verzeichnis gefunden")
+
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+    message(f"from:  {src_path}", "both")
+    message(f"to:    {dest_path}", "both")
+
+    # Wenn Zieldatei existiert, prüfen ob korrekt
+    if os.path.exists(dest_path):
+        try:
+            if os.path.islink(dest_path) and os.path.realpath(dest_path) == os.path.realpath(src_path):
+                return "symlink (OK)"
+            elif os.path.samefile(dest_path, src_path):
+                return "hardlink/copy (OK)"
+            else:
+                os.remove(dest_path)
+        except Exception:
+            os.remove(dest_path)
+
+    # Versuch: Symlink
+    try:
+        os.symlink(src_path, dest_path)
+        if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+            return "symlink (neu)"
+    except Exception as e:
+        message(f"Symlink fehlgeschlagen: {e}", "both")
+
+    # Versuch: Hardlink
+    try:
+        os.link(src_path, dest_path)
+        if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+            return "hardlink (neu)"
+    except Exception as e:
+        message(f"Hardlink fehlgeschlagen: {e}", "both")
+
+    # Fallback: Datei kopieren
+    try:
+        shutil.copy2(src_path, dest_path)
+        if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+            return "copy (neu)"
+    except Exception as e:
+        message(f"Kopie fehlgeschlagen: {e}", "both")
+        raise RuntimeError(f"Datei konnte weder verlinkt noch kopiert werden: {src_path}")
+
+    raise RuntimeError(f"Zieldatei konnte nicht erstellt werden: {dest_path}")
+
+def XXXlink_export_file(doc, kind, working_dir, all_dir=".all"):
     assert kind in ("pdf", "json")
 
     filename = f"{doc.id}--{sanitize_filename(doc.title)}.{kind}"
