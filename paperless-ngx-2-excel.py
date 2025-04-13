@@ -902,6 +902,15 @@ def find_cached_file(doc_id, all_dir, kind):
 
 import os
 import shutil
+import platform
+
+def is_synology():
+    uname = platform.uname()
+    return (
+        "synology" in uname.node.lower()
+        or os.path.exists("/etc/synoinfo.conf")
+        or os.path.exists("/etc.defaults/synoinfo.conf")
+    )
 
 def link_export_file(doc, kind, working_dir, all_dir=".all"):
     assert kind in ("pdf", "json")
@@ -910,7 +919,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     dest_path = os.path.join(working_dir, filename)
 
     # Quelle im .all-Ordner finden
-    message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}", target="both")
+    #message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}", target="both")
     src_path = find_cached_file(doc.id, all_dir=all_dir, kind=kind)
     if src_path is None:
         raise FileNotFoundError(f"Keine {kind.upper()}-Datei für Dokument {doc.id} im .all-Verzeichnis gefunden")
@@ -920,25 +929,33 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     #message(f"from:  {src_path}", "both")
     #message(f"to:    {dest_path}", "both")
 
-    message(f"# Wenn Zieldatei{dest_path} existiert, prüfen ob korrekt",target ="both")
+    # Wenn Zieldatei existiert, prüfen ob korrekt
     if os.path.exists(dest_path):
         try:
             if os.path.islink(dest_path) and os.path.realpath(dest_path) == os.path.realpath(src_path):
-                message("symlinkg OK")
                 return "symlink (OK)"
             elif os.path.samefile(dest_path, src_path):
-                message("hardlink/copy ok")
                 return "hardlink/copy (OK)"
             else:
                 os.remove(dest_path)
         except Exception:
             os.remove(dest_path)
 
+    # Auf Synology: direkt kopieren
+    if is_synology():
+        try:
+            message("Synology erkannt – verwende Kopie statt Symlink/Hardlink", "both")
+            shutil.copy2(src_path, dest_path)
+            if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+                return "copy (synology)"
+        except Exception as e:
+            message(f"Kopie auf Synology fehlgeschlagen: {e}", "both")
+            raise RuntimeError(f"Konnte Datei nicht kopieren: {src_path}")
+
     # Versuch: Symlink
     try:
         os.symlink(src_path, dest_path)
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
-            message("symlink (neu)")
             return "symlink (neu)"
     except Exception as e:
         message(f"Symlink fehlgeschlagen: {e}", "both")
@@ -947,79 +964,19 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     try:
         os.link(src_path, dest_path)
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
-            message("hardlink (neu)")
             return "hardlink (neu)"
     except Exception as e:
         message(f"Hardlink fehlgeschlagen: {e}", "both")
 
-    # Fallback: Datei kopieren
+    # Letzter Fallback: Kopieren
     try:
         shutil.copy2(src_path, dest_path)
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
-            message("copy (neu)")
-            return "copy (neu)"
+            return "copy (fallback)"
     except Exception as e:
-        message(f"Kopie fehlgeschlagen: {e}" )
-        raise RuntimeError(f"Datei konnte weder verlinkt noch kopiert werden: {src_path}")
+        message(f"Kopie fehlgeschlagen: {e}", "both")
 
     raise RuntimeError(f"Zieldatei konnte nicht erstellt werden: {dest_path}")
-
-def XXXlink_export_file(doc, kind, working_dir, all_dir=".all"):
-    assert kind in ("pdf", "json")
-
-    filename = f"{doc.id}--{sanitize_filename(doc.title)}.{kind}"
-    dest_path = os.path.join(working_dir, filename)
-
-    # Quelle im .all-Ordner finden
-    message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}",target="both")
-
-    src_path = find_cached_file(doc.id, all_dir=all_dir, kind=kind)
-    if src_path is None:
-        raise FileNotFoundError(f"Keine {kind.upper()}-Datei für Dokument {doc.id} im .all-Verzeichnis gefunden")
-
-    # Zielverzeichnis sicherstellen
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-
-    message(f"from:  {src_path}","both") 
-    message(f"to:    {dest_path}","both") 
-
-    # Wenn Zieldatei existiert → prüfen oder entfernen
-    if os.path.exists(dest_path):
-        try:
-            # Ist es ein Symlink und zeigt korrekt?
-            if os.path.islink(dest_path):
-                if os.path.realpath(dest_path) == os.path.realpath(src_path):
-                    return "symlink (OK)"
-                else:
-                    os.remove(dest_path)
-            # Ist es eine Hardlink oder echte Datei identisch?
-            elif os.path.samefile(dest_path, src_path):
-                return "hardlink/copy (OK)"
-            else:
-                os.remove(dest_path)
-        except Exception:
-            os.remove(dest_path)
-
-    # Jetzt sauber: versuch Symlink → Hardlink → Copy
-    try:
-        rel_path = os.path.relpath(src_path, os.path.dirname(dest_path))
-        os.symlink(rel_path, dest_path)
-        return "symlink"
-    except FileExistsError:
-        os.remove(dest_path)
-        return link_export_file(doc, kind, working_dir, all_dir)
-    except OSError:
-        try:
-            os.link(src_path, dest_path)
-            return "hardlink"
-        except FileExistsError:
-            os.remove(dest_path)
-            return link_export_file(doc, kind, working_dir, all_dir)
-        except OSError:
-            message(f"shutil.copy2({src_path}, {dest_path}")
-            shutil.copy2(src_path, dest_path)
-            return "copy"
-
 
 async def exportThem(paperless, dir, query, max_files, frequency):
     count = 0 
