@@ -171,7 +171,6 @@ def prepare_logging(log_dir, script_name, max_files):
 # message("Dokument konnte nicht geladen werden", level="warn")
 # message("Verarbeite Dokument 17", inline=True)
 
-
 def get_git_version(default="v0.0.0"):
     try:
         version = subprocess.check_output(
@@ -927,25 +926,49 @@ def is_synology():
         or os.path.exists("/etc.defaults/synoinfo.conf")
     )
 
+def force_copy_mode():
+    """
+    Gibt True zurück, wenn per Umgebungsvariable 'FORCE_COPY=1' erzwungen wird,
+    dass keine Symlinks oder Hardlinks verwendet werden sollen.
+    """
+    return os.environ.get("FORCE_COPY", "0") == "1"
+
+import os
+import shutil
+import glob
+
 def link_export_file(doc, kind, working_dir, all_dir=".all"):
     assert kind in ("pdf", "json")
 
     filename = f"{doc.id}--{sanitize_filename(doc.title)}.{kind}"
     dest_path = os.path.join(working_dir, filename)
+    dest_dir = os.path.dirname(dest_path)
+
+    message(f"DEBUG: FORCE_COPY = {os.environ.get('FORCE_COPY')}", target="both")
 
     # Quelle im .all-Ordner finden
-    #message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}", target="both")
+    message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}", target="both")
     src_path = find_cached_file(doc.id, all_dir=all_dir, kind=kind)
     if src_path is None:
         raise FileNotFoundError(f"Keine {kind.upper()}-Datei für Dokument {doc.id} im .all-Verzeichnis gefunden")
 
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    os.makedirs(dest_dir, exist_ok=True)
 
-    #message(f"from:  {src_path}", "both")
-    #message(f"to:    {dest_path}", "both")
+    # Alte Dateien mit gleicher doc.id löschen, wenn Name abweicht
+    prefix = f"{doc.id}--"
+    pattern = os.path.join(dest_dir, f"{prefix}*.{kind}")
+    existing_files = glob.glob(pattern)
 
-    # Wenn Zieldatei existiert, prüfen ob korrekt
-    if os.path.exists(dest_path):
+    for old_path in existing_files:
+        if os.path.abspath(old_path) != os.path.abspath(dest_path):
+            try:
+                message(f"🔁 Entferne alte Datei für doc.id {doc.id}: {old_path}", "both")
+                os.remove(old_path)
+            except Exception as e:
+                message(f"⚠️ Fehler beim Entfernen alter Datei: {old_path} → {e}", "both")
+
+    # Prüfen ob Ziel existiert oder kaputter Symlink vorhanden ist
+    if os.path.lexists(dest_path):
         try:
             if os.path.islink(dest_path) and os.path.realpath(dest_path) == os.path.realpath(src_path):
                 return "symlink (OK)"
@@ -953,29 +976,37 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
                 return "hardlink/copy (OK)"
             else:
                 os.remove(dest_path)
-        except Exception:
+                os.makedirs(dest_dir, exist_ok=True)
+        except Exception as e:
+            message(f"Fehler beim Entfernen von bestehender Datei: {e}", "both")
             os.remove(dest_path)
 
-    # Auf Synology: direkt kopieren
-    if is_synology():
+    os.makedirs(dest_dir, exist_ok=True)
+
+    # 🔁 Nur kopieren, wenn Umgebungsvariable gesetzt ist
+    if force_copy_mode():
         try:
-            message("Synology erkannt – verwende Kopie statt Symlink/Hardlink", "both")
+            message("🔁 FORCE_COPY aktiv – kopiere Datei", "both")
             shutil.copy2(src_path, dest_path)
             if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
-                return "copy (synology)"
+                return "copy (FORCE)"
         except Exception as e:
-            message(f"Kopie auf Synology fehlgeschlagen: {e}", "both")
+            message(f"Kopie fehlgeschlagen: {e}", "both")
             raise RuntimeError(f"Konnte Datei nicht kopieren: {src_path}")
 
-    # Versuch: Symlink
+    # 🔗 Symlink versuchen (relativer Pfad!)
     try:
-        os.symlink(src_path, dest_path)
+        rel_src_path = os.path.relpath(src_path, start=dest_dir)
+        os.symlink(rel_src_path, dest_path)
+        message(f"🔗 Symlink zeigt auf (relativ): {rel_src_path}", "both")
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
             return "symlink (neu)"
     except Exception as e:
-        message(f"Symlink fehlgeschlagen: {e}", "both")
+        message(f"Symlink fehlgeschlagen: {type(e).__name__}: {e}", "both")
+        message(f"                      : {rel_src_path}", "both")
+        message(f"                      : {dest_path}", "both")
 
-    # Versuch: Hardlink
+    # 🔗 Hardlink versuchen
     try:
         os.link(src_path, dest_path)
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
