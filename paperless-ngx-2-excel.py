@@ -564,7 +564,6 @@ def should_export(export_dir: str, frequency: str, config_mtime: float) -> tuple
             return False, f"noExport: yearly until {next_year.year}"
     return False, (
         f"noExport: last file {readable_time}, "
-        f"Frequenz '{frequency}': {cond}"
     )
 
 async def get_dict_from_paperless(endpoint):
@@ -918,15 +917,17 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
 
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
-    message(f"from:  {src_path}", "both")
-    message(f"to:    {dest_path}", "both")
+    #message(f"from:  {src_path}", "both")
+    #message(f"to:    {dest_path}", "both")
 
-    # Wenn Zieldatei existiert, prüfen ob korrekt
+    message(f"# Wenn Zieldatei{dest_path} existiert, prüfen ob korrekt",target ="both")
     if os.path.exists(dest_path):
         try:
             if os.path.islink(dest_path) and os.path.realpath(dest_path) == os.path.realpath(src_path):
+                message("symlinkg OK")
                 return "symlink (OK)"
             elif os.path.samefile(dest_path, src_path):
+                message("hardlink/copy ok")
                 return "hardlink/copy (OK)"
             else:
                 os.remove(dest_path)
@@ -937,6 +938,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     try:
         os.symlink(src_path, dest_path)
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+            message("symlink (neu)")
             return "symlink (neu)"
     except Exception as e:
         message(f"Symlink fehlgeschlagen: {e}", "both")
@@ -945,6 +947,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     try:
         os.link(src_path, dest_path)
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+            message("hardlink (neu)")
             return "hardlink (neu)"
     except Exception as e:
         message(f"Hardlink fehlgeschlagen: {e}", "both")
@@ -953,9 +956,10 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     try:
         shutil.copy2(src_path, dest_path)
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+            message("copy (neu)")
             return "copy (neu)"
     except Exception as e:
-        message(f"Kopie fehlgeschlagen: {e}", "both")
+        message(f"Kopie fehlgeschlagen: {e}" )
         raise RuntimeError(f"Datei konnte weder verlinkt noch kopiert werden: {src_path}")
 
     raise RuntimeError(f"Zieldatei konnte nicht erstellt werden: {dest_path}")
@@ -1094,8 +1098,8 @@ async def exportThem(paperless, dir, query, max_files, frequency):
         method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=os.path.join(export_dir, ".all")) 
         method_json = link_export_file(doc, kind="json", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
 
-        message(f"{doc.id}: PDF → {method_pdf}",target="log")
-        message(f"{doc.id}: json → {method_json}", target="log")
+        message(f"{doc.id}: PDF → {method_pdf}",target="both")
+        message(f"{doc.id}: json → {method_json}", target="both")
 
 
     # Exportiere die gesammelten Daten nach Excel
