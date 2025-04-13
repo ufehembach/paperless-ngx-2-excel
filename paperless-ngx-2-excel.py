@@ -664,12 +664,27 @@ async def export_pdf(doc, working_dir):
         f.write(document_content)
 
 # ----------------------
+
 def sanitize_filename(filename):
     """
-    Remove or replace characters in the filename that are not allowed in file names.
+    Remove or replace characters in the filename that are problematic in common filesystems.
     """
-    sanitized = re.sub(r'[<>:"/\\|?*]', '-', filename)  # Ersetze verbotene Zeichen durch '-'
-    return sanitized[:255]  # Truncate to avoid overly long filenames
+    original = filename
+
+    # Ersetze bekannte problematische Zeichen (Windows, Samba, NAS, etc.)
+    sanitized = re.sub(r'[<>:"/\\|?*\[\]]', '-', filename)  # auch [ und ] ersetzen
+
+    # Optional: Leerzeichen am Anfang/Ende oder doppelte Minus entfernen
+    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+    sanitized = re.sub(r'-{2,}', '-', sanitized)
+
+    # Truncate auf maximale Pfadlänge
+    sanitized = sanitized[:255]
+
+  #  if sanitized != original:
+  #      message(f"Dateiname bereinigt: '{original}' → '{sanitized}'", target="both")
+
+    return sanitized
 
 # ----------------------
 
