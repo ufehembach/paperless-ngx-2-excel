@@ -944,7 +944,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     # Auf Synology: direkt kopieren
     if is_synology():
         try:
-            message("Synology erkannt – verwende Kopie statt Symlink/Hardlink", "both")
+            t message("Synology erkannt – verwende Kopie statt Symlink/Hardlink", "both")
             shutil.copy2(src_path, dest_path)
             if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
                 return "copy (synology)"
@@ -1055,8 +1055,7 @@ async def exportThem(paperless, dir, query, max_files, frequency):
         method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=os.path.join(export_dir, ".all")) 
         method_json = link_export_file(doc, kind="json", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
 
-        message(f"{doc.id}: PDF → {method_pdf}",target="both")
-        message(f"{doc.id}: json → {method_json}", target="both")
+        message(f"{doc.id}: PDF → {method_pdf} json → {method_json}", target="both")
 
 
     # Exportiere die gesammelten Daten nach Excel
