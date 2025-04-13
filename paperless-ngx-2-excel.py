@@ -944,10 +944,10 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     dest_path = os.path.join(working_dir, filename)
     dest_dir = os.path.dirname(dest_path)
 
-    message(f"DEBUG: FORCE_COPY = {os.environ.get('FORCE_COPY')}", target="both")
+    #message(f"DEBUG: FORCE_COPY = {os.environ.get('FORCE_COPY')}", target="both")
 
     # Quelle im .all-Ordner finden
-    message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}", target="both")
+    #message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}", target="both")
     src_path = find_cached_file(doc.id, all_dir=all_dir, kind=kind)
     if src_path is None:
         raise FileNotFoundError(f"Keine {kind.upper()}-Datei für Dokument {doc.id} im .all-Verzeichnis gefunden")
@@ -962,7 +962,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     for old_path in existing_files:
         if os.path.abspath(old_path) != os.path.abspath(dest_path):
             try:
-                message(f"🔁 Entferne alte Datei für doc.id {doc.id}: {old_path}", "both")
+                #message(f"🔁 Entferne alte Datei für doc.id {doc.id}: {old_path}", "both")
                 os.remove(old_path)
             except Exception as e:
                 message(f"⚠️ Fehler beim Entfernen alter Datei: {old_path} → {e}", "both")
@@ -986,19 +986,19 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     # 🔁 Nur kopieren, wenn Umgebungsvariable gesetzt ist
     if force_copy_mode():
         try:
-            message("🔁 FORCE_COPY aktiv – kopiere Datei", "both")
+            #message("🔁 FORCE_COPY aktiv – kopiere Datei", "both")
             shutil.copy2(src_path, dest_path)
             if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
                 return "copy (FORCE)"
         except Exception as e:
-            message(f"Kopie fehlgeschlagen: {e}", "both")
+            #message(f"Kopie fehlgeschlagen: {e}", "both")
             raise RuntimeError(f"Konnte Datei nicht kopieren: {src_path}")
 
     # 🔗 Symlink versuchen (relativer Pfad!)
     try:
         rel_src_path = os.path.relpath(src_path, start=dest_dir)
         os.symlink(rel_src_path, dest_path)
-        message(f"🔗 Symlink zeigt auf (relativ): {rel_src_path}", "both")
+        #message(f"🔗 Symlink zeigt auf (relativ): {rel_src_path}", "both")
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
             return "symlink (neu)"
     except Exception as e:
