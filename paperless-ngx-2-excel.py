@@ -1101,7 +1101,7 @@ async def exportThem(paperless, dir, query, max_files, frequency):
         method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=os.path.join(export_dir, ".all")) 
         method_json = link_export_file(doc, kind="json", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
 
-        message(f"{doc.id}: PDF → {method_pdf} json → {method_json}", target="both")
+       # message(f"{doc.id}: PDF → {method_pdf} json → {method_json}", target="both")
 
 
     # Exportiere die gesammelten Daten nach Excel
@@ -1353,6 +1353,7 @@ async def main():
               frequency = 'daily'
 
           should_run, reason = should_export(root, frequency, config_mtime)
+          message(f"{root} : {query_value} -> ({reason})", target="both")
           if should_run:
               #print_separator('#')           # #######...
               #print_separator('##')          # ## ## ## ...
@@ -1360,12 +1361,10 @@ async def main():
               #print_separator('·', 0.5)      # 50% der Breite
               print_separator('=', 0.75)      # 50% der Breite
               #print(f"\n{root} {query_value} -> Export ({reason})")
-              message(f"{root} : {query_value} -> ({reason})", target="both")
               await exportThem(paperless=paperless, dir=root, query=query_value, max_files=max_files,frequency=frequency)
           else:
               #print(f"\n{root} {query_value} -> NOexport ({reason})")
               print_separator('-', 0.75)      # 50% der Breite
-              message(f"{root} : {query_value} -> ({reason})", target="both")
 
     except Exception as e:
         message(f"Error: {str(e)}", target="both")
