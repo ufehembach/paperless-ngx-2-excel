@@ -161,6 +161,7 @@ def finalize_log():
 def prepare_logging(log_dir, script_name, max_files):
     global _final_log_path
     progress_log_path, final_log_path = initialize_log(log_dir, script_name, max_files)
+    cleanup_old_files(log_dir,filename_prefix="##" + script_name ,pattern="log",max_count_str=max_files)
     _final_log_path = final_log_path
     set_log_path(progress_log_path)
     atexit.register(finalize_log)
@@ -729,7 +730,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     base_url = url
 
     # Ordnerpfad aus file_path extrahieren
-    directory = os.path.dirname(file_path)
+    directory = os.path.dirname(p=file_path)
     cleanup_old_files(file_path, filename_prefix="##" + directory ,pattern="xlsx",max_count_str=maxfiles)
 
     # Dateiname vorbereiten
