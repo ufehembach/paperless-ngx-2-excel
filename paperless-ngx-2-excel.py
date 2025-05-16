@@ -1113,6 +1113,8 @@ async def exportThem(paperless, dir, query, max_files, frequency):
 
     excel_file = os.path.join(dir, f"##{last_dir}-{datetime.now().strftime('%Y%m%d')}.xlsx")
     export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta, maxfiles=max_files,query=query, frequency=frequency)
+    cleanup_old_files(dir, "##", max_count_str=max_files, pattern="xlsx")
+
 #    log_message(progress_log_path, f"dir: {dir}, Documents exported: {len(document_data)}")
 #    print(f"Exported Excel file: {excel_file}")
 
