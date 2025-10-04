@@ -408,9 +408,55 @@ def format_currency(value, currency_locale="de_DE.UTF-8"):
     except Exception as e:
         formatted_value = f"{value_float:.2f}"
     return formatted_value
+from datetime import datetime, date
 
+def format_date(val, output_format):
+    """
+    Nimmt datetime.date, datetime.datetime oder String entgegen und gibt
+    'yyyy-mm' oder 'yyyy-mm-dd' zurück. Gibt None bei Fehlern.
+    """
+    if val is None:
+        print(f"Date string is empty or None: {val}")
+        return None
+
+    # Bereits datetime/date?
+    if isinstance(val, datetime):
+        dt = val
+    elif isinstance(val, date):
+        dt = datetime(val.year, val.month, val.day)
+    else:
+        s = str(val).strip()
+        if not s:
+            print(f"Date string is empty or None: {val}")
+            return None
+
+        # Erst dd.mm.yyyy[ HH:MM], dann ISO/Varianten
+        try:
+            if " " in s:
+                dt = datetime.strptime(s, "%d.%m.%Y %H:%M")
+            else:
+                dt = datetime.strptime(s, "%d.%m.%Y")
+        except Exception:
+            dt = None
+            for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M", "%Y/%m/%d", "%d-%m-%Y", "%Y.%m.%d"):
+                try:
+                    dt = datetime.strptime(s, fmt)
+                    break
+                except ValueError:
+                    continue
+            if dt is None:
+                print(f"Failed to format date '{val}': unsupported format")
+                return None
+
+    if output_format == "yyyy-mm":
+        return dt.strftime("%Y-%m")
+    if output_format == "yyyy-mm-dd":
+        return dt.strftime("%Y-%m-%d")
+
+    print(f"Unsupported output format: {output_format}")
+    return None
 # ----------------------
-def format_date(date_string, output_format):
+def XXformat_date(date_string, output_format):
     """
     Formatiert das Datum im Format '%d.%m.%Y' oder '%d.%m.%Y %H:%M' 
     in das gewünschte Format:
@@ -448,9 +494,52 @@ def format_date(date_string, output_format):
         return None
 
         return None
+from datetime import datetime, date
 
+def parse_date(val):
+    # None / leere Strings
+    if val is None:
+        return None
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return None
+    else:
+        s = val  # kann date/datetime/int/float sein
+
+    # Bereits datetime/date?
+    if isinstance(s, datetime):
+        return s.date()
+    if isinstance(s, date):
+        return s
+
+    # Unix-Timestamp (int/float)?
+    if isinstance(s, (int, float)):
+        try:
+            return datetime.fromtimestamp(s).date()
+        except Exception:
+            pass
+
+    # String-Parsing
+    s = str(s).strip()
+    # ISO zuerst
+    try:
+        return date.fromisoformat(s)
+    except Exception:
+        pass
+
+    # alternative Formate
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%Y/%m/%d", "%d-%m-%Y", "%Y.%m.%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+
+    # letzte Rettung: nichts parsebar
+    # logger.warning(f"[parse_date] Could not parse {s!r}")
+    return None
 # ----------------------
-def parse_date(date_input):
+def XXparse_date(date_input):
     """
     Gibt das Datum im Format '%d.%m.%Y' zurück, wenn Uhrzeit 00:00 ist,
     sonst im Format '%d.%m.%Y %H:%M'. Akzeptiert Strings oder datetime-Objekte.
@@ -475,10 +564,35 @@ def parse_date(date_input):
         return None
 
 # ----------------------
-async def retry_async(fn, retries=3, delay=2, backoff=2,
-                      exceptions=(aiohttp.ClientError, asyncio.TimeoutError),
-                      desc=None):
-    current_delay = delay
+# ----------------------
+def _default_retry_exceptions():
+    import aiohttp, asyncio
+    excs = [aiohttp.ClientError, asyncio.TimeoutError, ConnectionResetError, BrokenPipeError]
+    # Aiohttp: ServerDisconnectedError ist ein eigener Typ -> explizit mit rein
+    try:
+        from aiohttp.client_exceptions import ServerDisconnectedError
+        excs.append(ServerDisconnectedError)
+    except Exception:
+        pass
+    # pypaperless-Wrapper
+    try:
+        from pypaperless.exceptions import PaperlessConnectionError
+        excs.append(PaperlessConnectionError)
+    except Exception:
+        pass
+    return tuple(excs)
+
+async def retry_async(fn, retries=5, delay=2, backoff=2.0, jitter=0.3,
+                      exceptions=None, desc=None):
+    """
+    Führt fn() mit Exponential Backoff + leichtem Jitter aus.
+    - exceptions: Tuple der Exceptions, die zu Retries führen (Default: Netzwerk + PaperlessConnectionError)
+    """
+    import random, shutil as _shutil, asyncio as _asyncio
+    if exceptions is None:
+        exceptions = _default_retry_exceptions()
+
+    current_delay = float(delay)
     for attempt in range(1, retries + 1):
         try:
             return await fn()
@@ -486,9 +600,11 @@ async def retry_async(fn, retries=3, delay=2, backoff=2,
             if attempt == retries:
                 raise
             label = f' bei "{desc}"' if desc else ''
-            term_width = shutil.get_terminal_size((80, 20)).columns
-            print(f"\r[retry_async] Fehler{label}: {e} – Versuch {attempt}/{retries}, nächster in {current_delay}s...".ljust(term_width), end='', flush=True)
-            await asyncio.sleep(current_delay)
+            term_width = _shutil.get_terminal_size((80, 20)).columns
+            print(f"\r[retry_async] Fehler{label}: {e} – Versuch {attempt}/{retries}, nächster in {current_delay:.1f}s...".ljust(term_width), end='', flush=True)
+            # kleiner Jitter, damit viele gleichzeitige Requests nicht synchron wieder zuschlagen
+            wait = current_delay * (1.0 + random.uniform(-jitter, jitter))
+            await _asyncio.sleep(max(0.1, wait))
             current_delay *= backoff
 
 # ----------------------
@@ -648,20 +764,25 @@ def getmeta(key, doc, meta):
         return 'Unbekannt'
 
 async def export_pdf(doc, working_dir):
-    """Exportiert ein Dokument als PDF mit automatischem Retry."""
+    """Exportiert ein Dokument als PDF mit Retry; bei endgültigem Fehler wird geloggt und übersprungen."""
     sanitized_title = sanitize_filename(doc.title)
     filename = f"{doc.id}--{sanitized_title}.pdf"
     pdf_path = os.path.join(working_dir, filename)
 
-    download = await retry_async(lambda: doc.get_download(), desc=f"PDF-Download für Dokument {doc.id}")
-    document_content = download.content
+    try:
+        download = await retry_async(lambda: doc.get_download(),
+                                     desc=f"PDF-Download für Dokument {doc.id}")
+        document_content = download.content
+        if not document_content:
+            message(f"Keine PDF-Daten für Dokument {doc.id} gefunden.", target="log", level="warn")
+            return False
 
-    if not document_content:
-        print(f"Keine PDF-Daten für Dokument {doc.id} gefunden.")
-        return
-
-    with open(pdf_path, 'wb') as f:
-        f.write(document_content)
+        with open(pdf_path, 'wb') as f:
+            f.write(document_content)
+        return True
+    except Exception as e:
+        message(f"PDF-Download fehlgeschlagen für Doc {doc.id}: {e}", target="log", level="warn")
+        return False
 
 # ----------------------
 
@@ -860,9 +981,73 @@ def has_file_from_today(directory):
             if file_mtime.date() == today:
                 return True
     return False
-
-# ----------------------
 def process_custom_fields(meta, doc):
+    """
+    - meta['custom_fields']: Dict[id -> Objekt], Objekt._data enthält u.a. 'data_type' und evtl. 'extra_data'
+    - doc['custom_fields']: Liste von Einträgen mit 'field' (ID) und 'value'
+
+    Rückgabe:
+      custom_fields: dict mit aufgelösten Werten/Labels
+      currency_fields: Liste von Feldnamen (für Summen)
+    """
+    custom_fields = {}
+    currency_fields = []
+
+    meta_cf = meta.get("custom_fields") or {}
+    doc_cf_list = doc.get("custom_fields") or []
+
+    for entry in doc_cf_list:
+        field_id = entry.get("field")
+        if not field_id or field_id not in meta_cf:
+            continue
+
+        meta_obj = meta_cf[field_id]
+        field_name = getattr(meta_obj, "name", f"field_{field_id}")
+
+        data = getattr(meta_obj, "_data", {}) or {}
+        field_type = (data.get("data_type") or "").lower()
+        field_value = entry.get("value")
+
+        # Choices/Options einsammeln (Liste oder Dict → Mapping)
+        extra = (data.get("extra_data") or {})
+        choices = extra.get("select_options") or extra.get("choices") or extra.get("options") or []
+
+        choice_map = {}
+        if isinstance(choices, dict):
+            choice_map = {str(k): v for k, v in choices.items()}
+        elif isinstance(choices, list):
+            for ch in choices:
+                if isinstance(ch, dict):
+                    key = ch.get("value") or ch.get("id") or ch.get("key") or ch.get("slug") or ch.get("label")
+                    label = ch.get("label") or ch.get("name") or ch.get("value") or ch.get("slug") or str(ch)
+                else:
+                    key = str(ch)
+                    label = str(ch)
+                if key is not None:
+                    choice_map[str(key)] = label
+
+        def resolve_choice(v):
+            if v is None:
+                return "none"
+            if isinstance(v, list):  # multiselect
+                return ", ".join(str(choice_map.get(str(x), x)) for x in v)
+            return choice_map.get(str(v), v)
+
+        if field_type in ("monetary", "currency"):
+            numeric_value = parse_currency(field_value)  # deine bestehende Funktion
+            custom_fields[field_name] = numeric_value
+            custom_fields[f"{field_name}_formatted"] = format_currency(field_value)  # deine bestehende Funktion
+            currency_fields.append(field_name)
+
+        elif field_type in ("select", "multiselect", "choice", "choices"):
+            custom_fields[field_name] = resolve_choice(field_value)
+
+        else:
+            custom_fields[field_name] = field_value
+
+    return custom_fields, currency_fields
+# ----------------------
+def XXprocess_custom_fields(meta, doc):
     custom_fields = {}
     currency_fields = []  # Liste zum Speichern der Currency-Feldnamen
 
@@ -1047,12 +1232,12 @@ async def exportThem(paperless, dir, query, max_files, frequency):
     for doc in tqdm(documents, desc=f"Processing documents for '{dir} with {query}'", unit="doc"):
         count += 1
 
-        try:
-          metadata = None
-          metadata = await retry_async(lambda: doc.get_metadata(), desc=f"Metadaten für Dokument {doc.id}")
-        except Exception as e:
-            print(f"Metadaten für Dokument {doc.id} konnten nicht geladen werden: {e}. Überspringe dieses Dokument.")
-            continue
+        # Metadaten optional abrufen (standardmäßig AUS, wegen pypaperless 5.x Validierung)
+        if os.environ.get("FETCH_METADATA", "0") == "1":
+            try:
+                _ = await retry_async(lambda: doc.get_metadata(), desc=f"Metadaten für Dokument {doc.id}")
+            except Exception as e:
+                message(f"Metadaten für Dokument {doc.id} übersprungen: {e}", target="log")
 
         docData = doc._data
         page_count = docData['page_count']
@@ -1065,7 +1250,6 @@ async def exportThem(paperless, dir, query, max_files, frequency):
         # Daten für die Excel-Tabelle sammeln
         row = OrderedDict([
             ("ID", doc.id),
-            (  "AddDateFull", format_date(parse_date(doc.added), "yyyy-mm-dd")),
             ("Korrespondent", meta["correspondents"][doc.correspondent].name),
             ("Titel", doc.title),
             ("Tags", thisTags), 
@@ -1112,7 +1296,8 @@ async def exportThem(paperless, dir, query, max_files, frequency):
     last_dir = os.path.basename(dir)
 
     excel_file = os.path.join(dir, f"##{last_dir}-{datetime.now().strftime('%Y%m%d')}.xlsx")
-    export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta, maxfiles=max_files,query=query, frequency=frequency)
+    #export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta, maxfiles=max_files,query=query, frequency=frequency)
+    export_to_excel(document_data, excel_file, get_script_name(), currency_columns=currency_columns, dir=dir, url=url, meta=meta, maxfiles=max_files, query=query, frequency=frequency)
     cleanup_old_files(dir, "##", max_count_str=max_files, pattern="xlsx")
 
 #    log_message(progress_log_path, f"dir: {dir}, Documents exported: {len(document_data)}")
@@ -1193,31 +1378,41 @@ async def build_all_cache(paperless, export_dir, log_path=None):
     bar = tqdm(total=total, desc="Dokumente cachen: 0✓ / 0↓", unit="doc")
 
     async for doc in safe_document_iterator(paperless):
-        sanitized_title = sanitize_filename(doc.title)
-        pdf_filename = f"{doc.id}--{sanitized_title}.pdf"
-        json_filename = f"{doc.id}--{sanitized_title}.json"
-        pdf_path = os.path.join(all_dir, pdf_filename)
-        json_path = os.path.join(all_dir, json_filename)
+        try:
+            sanitized_title = sanitize_filename(doc.title)
+            pdf_filename = f"{doc.id}--{sanitized_title}.pdf"
+            json_filename = f"{doc.id}--{sanitized_title}.json"
+            pdf_path = os.path.join(all_dir, pdf_filename)
+            json_path = os.path.join(all_dir, json_filename)
 
-        updated = False
+            updated = False
 
-        if not os.path.exists(pdf_path):
-            await export_pdf(doc, working_dir=all_dir)
-            updated = True
-        if not os.path.exists(json_path):
-            export_json(paperless=paperless, doc=doc, working_dir=all_dir)
-            updated = True
+            if not os.path.exists(pdf_path):
+                ok = await export_pdf(doc, working_dir=all_dir)
+                updated = updated or ok
 
-        if updated:
-            done += 1
-        else:
-            cached += 1
+            if not os.path.exists(json_path):
+                try:
+                    export_json(paperless=paperless, doc=doc, working_dir=all_dir)
+                    updated = True
+                except Exception as e:
+                    message(f"JSON-Export fehlgeschlagen für Doc {doc.id}: {e}", target="log", level="warn")
 
-        bar.update(1)
-        bar.set_description(f"Dokumente cachen: {cached}✓ / {done}↓")
+            if updated:
+                done += 1
+            else:
+                cached += 1
 
-    bar.close()
-    message(f"Cache abgeschlossen: {done} neu, {cached} übersprungen.")
+            bar.update(1)
+            bar.set_description(f"Dokumente cachen: {cached}✓ / {done}↓")
+
+            # minimaler Cooldown, um Verbindungsabbrüche zu reduzieren
+            await asyncio.sleep(0.05)
+
+        except Exception as e:
+            # Fängt alles, damit ein einzelnes Dokument nicht den gesamten Lauf killt
+            message(f"Fehler bei Doc {getattr(doc,'id','?')}: {e}", target="log", level="warn")
+            bar.update(1)
 
 def extract_doc_id(filename):
     """Extrahiere die Dokument-ID aus einem Dateinamen wie '874--irgendwas.pdf'."""
