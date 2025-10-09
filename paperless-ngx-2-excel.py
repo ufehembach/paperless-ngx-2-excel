@@ -807,6 +807,17 @@ def sanitize_filename(filename):
 
     return sanitized
 
+# Remove characters not allowed by Excel (control chars 0x00-0x1F except tab/newline/carriage return)
+_XL_ILLEGAL_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
+
+def clean_for_excel(value):
+    """Return value with illegal worksheet characters removed (strings only)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return _XL_ILLEGAL_RE.sub('', value)
+    return value
+
 # ----------------------
 
 def get_document_json(paperless,doc):
@@ -874,6 +885,11 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
         print(f"[INFO] Keine Daten gefunden, erstelle leere Excel-Datei mit Platzhalter.")
         df = pd.DataFrame(columns=["Keine Daten vorhanden"])
 
+    # Clean illegal Excel characters from headers and string cells
+    df.columns = [clean_for_excel(str(c)) for c in df.columns]
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].map(clean_for_excel)
 
     with pd.ExcelWriter(fullfilename, engine="openpyxl") as writer:
         # DataFrame in Excel schreiben (ab Zeile 3 für Daten)
@@ -1247,16 +1263,42 @@ async def exportThem(paperless, dir, query, max_files, frequency):
         currency_columns.extend(doc_currency_columns)  # Speichere Currency-Felder
         thisTags =  getmeta("tags", doc, meta=meta)
 
+        # --- Normalize Storage Path into a constant prefix and a variable template tail ---
+        sp_obj = meta["storage_paths"].get(doc.storage_path)
+        sp_name = getattr(sp_obj, "name", "") if sp_obj else ""
+        # Paperless storage path objects expose the jinja-like path template commonly as "path"
+        sp_template = ""
+        if sp_obj:
+            sp_template = getattr(sp_obj, "path", "") or getattr(getattr(sp_obj, "_data", {}), "get", lambda *_: "")("path") if hasattr(sp_obj, "_data") else ""
+
+        # Extract constant prefix (everything before the first '{{') and the variable tail (starting with '{{')
+        _tpl = sp_template or ""
+        if "{{" in _tpl:
+            _pre, _tail = _tpl.split("{{", 1)
+            sp_prefix = _pre.rstrip("/ ").strip()
+            sp_tail = "{{" + _tail
+        else:
+            sp_prefix = _tpl.rstrip("/ ").strip()
+            sp_tail = ""
+
+        # A compact grouping key that ignores location-specific prefix and groups by the shared template
+        # (so that variants like "GutHembach St/<same template>" and "AndererOrt/<same template>" collapse)
+        storage_group = sp_tail.strip() or sp_name or sp_prefix
+
         # Daten für die Excel-Tabelle sammeln
         row = OrderedDict([
             ("ID", doc.id),
             ("Korrespondent", meta["correspondents"][doc.correspondent].name),
             ("Titel", doc.title),
-            ("Tags", thisTags), 
-
+            ("Tags", thisTags),
+          #  ("StoragePathName", sp_name),
+          #  ("StoragePrefix", sp_prefix),
+          #  ("StorageGroup", storage_group),
             # Custom Fields direkt hinter den Tags Pieinfügen
-            *custom_fields.items(),  
-
+            *custom_fields.items(),
+            ("Seiten", doc._data['page_count']),
+            ("Dokumenttyp", getmeta("document_type", doc, meta)),
+            ("Speicherpfad", getmeta("storage_path", doc, meta)),
             ("ArchivDate", parse_date(doc.created)),
             ("ArchivedDateMonth", format_date(parse_date(doc.created), "yyyy-mm")),
             ("ArchivedDateFull", format_date(parse_date(doc.created), "yyyy-mm-dd")),
@@ -1266,9 +1308,6 @@ async def exportThem(paperless, dir, query, max_files, frequency):
             ("AddedDate", parse_date(doc.added)),
             ("AddDateMonth", format_date(parse_date(doc.added), "yyyy-mm")),
             ("AddDateFull", format_date(parse_date(doc.added), "yyyy-mm-dd")),
-            ("Seiten", doc._data['page_count']),
-            ("Dokumenttyp", getmeta("document_type", doc, meta)),
-            ("Speicherpfad", getmeta("storage_path", doc, meta)),
             ("OriginalName", doc.original_file_name),
             ("ArchivedName", doc.archived_file_name),
             ("Owner", getattr(meta["users"].get(doc.owner), "username", "Unbekannt") if doc.owner else "Unbekannt")
@@ -1294,8 +1333,13 @@ async def exportThem(paperless, dir, query, max_files, frequency):
     url=paperless._base_url
 
     last_dir = os.path.basename(dir)
+    # Use the query for the Excel filename, but sanitize it to remove illegal characters (e.g., '*', '?', etc.).
+    safe_query = sanitize_filename(str(query) if query is not None else "")
+    if not safe_query:
+        # Fallback to directory name if query is empty after sanitization
+        safe_query = sanitize_filename(last_dir)
 
-    excel_file = os.path.join(dir, f"##{last_dir}-{datetime.now().strftime('%Y%m%d')}.xlsx")
+    excel_file = os.path.join(dir, f"##{safe_query}-{datetime.now().strftime('%Y%m%d')}.xlsx")
     #export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta, maxfiles=max_files,query=query, frequency=frequency)
     export_to_excel(document_data, excel_file, get_script_name(), currency_columns=currency_columns, dir=dir, url=url, meta=meta, maxfiles=max_files, query=query, frequency=frequency)
     cleanup_old_files(dir, "##", max_count_str=max_files, pattern="xlsx")
