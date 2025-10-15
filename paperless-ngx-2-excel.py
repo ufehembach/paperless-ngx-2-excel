@@ -65,10 +65,52 @@ import re
 from datetime import datetime
 import os
 import atexit
+import unicodedata
+
 
 LOG_PATH = None  # Wird beim Log-Setup gesetzt
 _final_log_path = None
 _last_message_was_inline = False  # Verfolgt, ob vorherige Ausgabe inline war
+
+
+# --- Unicode path normalization helpers for macOS (APFS) ---
+def _normalize_path(path: str) -> str:
+    """Normalize Unicode for macOS (APFS often stores as NFD)."""
+    try:
+        import platform  # local import to avoid top-level duplication
+        if platform.system() == "Darwin":
+            return unicodedata.normalize("NFC", path)
+    except Exception:
+        pass
+    return path
+
+
+def safe_unlink(path: str) -> bool:
+    """Remove a file or (even broken) symlink without raising outside.
+    Returns True if something got removed.
+    """
+    path = _normalize_path(path)
+    try:
+        # lexists() is True for broken symlinks as well
+        if os.path.lexists(path):
+            try:
+                os.unlink(path)
+                return True
+            except IsADirectoryError:
+                shutil.rmtree(path)
+                return True
+        return False
+    except FileNotFoundError:
+        return False
+    except PermissionError:
+        # bubble up; caller should know they cannot write here
+        raise
+    except OSError:
+        # last resort
+        if os.path.exists(path):
+            os.remove(path)
+            return True
+        return False
 
 
 def message(text: str, target: str = "both", level: str = "info", inline: bool = False):
@@ -724,7 +766,7 @@ async def fetch_paperless_meta(paperless, force_reload=False):
             message(f"{name.capitalize()}: {len(meta[name])}")
         except Exception as e:
             message( f"Fehler beim Abrufen von {name}: {e}")
-            meta[name] = []  # Leere Liste als Fallback, damit getmeta nicht crasht
+            meta[name] = {}  # Leere Liste als Fallback, damit getmeta nicht crasht
 
     _paperless_meta_cache = meta
     return meta
@@ -732,36 +774,41 @@ async def fetch_paperless_meta(paperless, force_reload=False):
 # ----------------------
 def getmeta(key, doc, meta):
     """
-    Holt den Wert aus den Metadaten basierend auf dem angegebenen Schlüssel und Dokument.
-    Hier wird doc als Objekt behandelt.
-
-    :param key: Der Schlüssel, nach dem in den Metadaten gesucht wird (z. B. "document_type").
-    :param doc: Das Dokument-Objekt, das das Attribut enthält (z. B. doc.document_type).
-    :param meta: Die Metadatenstruktur, die die Daten enthält.
-    :return: Der Name des Dokuments, falls vorhanden, oder 'Unbekannt', falls ein Fehler auftritt.
+    Liefert einen aufgelösten Namen (oder 'Unbekannt') für Felder wie:
+      - 'correspondent'  -> meta['correspondents'][id].name
+      - 'document_type'  -> meta['document_types'][id].name
+      - 'storage_path'   -> meta['storage_paths'][id].name
+      - 'tags'           -> Liste von IDs -> kommagetrennte Namen
+    Arbeitet robust mit Dict-Metadaten und None/fehlenden IDs.
     """
     try:
-        # Hole den Wert des Schlüssels aus doc als Attribut (z. B. doc.document_type)
-        index = getattr(doc, key, None)
+        value = getattr(doc, key, None)
 
-        if key == "tags" and isinstance(index, list):  # Spezieller Fall für tags (Liste von Indizes)
-            # Generiere den Tag-String für mehrere Tags
-                # Extrahiere die Tag-Namen basierend auf den Indizes in 'index'
-            return ", ".join(
-            meta["tags"][tag_id].name  # Greift auf den Namen des Tags mit der ID aus index zu
-                for tag_id in index)
+        # Tags: Liste von IDs -> kommagetrennte Namen
+        if key == "tags":
+            if not isinstance(value, list):
+                return "Unbekannt"
+            tags_map = meta.get("tags") or {}
+            names = []
+            for tid in value:
+                obj = tags_map.get(tid)
+                name = getattr(obj, "name", None) if obj else None
+                if name:
+                    names.append(name)
+            return ", ".join(names) if names else "Unbekannt"
 
-        # Wenn der Index gefunden wurde und der Index gültig ist
-        if index is not None and 0 <= index < len(meta.get(f"{key}s", [])):
-            # Hole das entsprechende Element aus meta und gebe dessen "name" zurück
-            return meta[f"{key}s"][index].name
-        else:
-            return 'Unbekannt'  # Falls der Index ungültig oder nicht vorhanden ist
-    except KeyError:
-        return 'Unbekannt'  # Falls der Schlüssel nicht existiert
+        # Einzelfelder: ID -> Objekt -> .name
+        space = f"{key}s"  # correspondent -> correspondents, document_type -> document_types, storage_path -> storage_paths
+        space_map = meta.get(space) or {}
+        if value is None:
+            return "Unbekannt"
+        obj = space_map.get(value)
+        if not obj:
+            return "Unbekannt"
+        return getattr(obj, "name", None) or getattr(obj, "username", "Unbekannt")
     except Exception as e:
-        print(f"Fehler beim Abrufen von {key}: {e}")
-        return 'Unbekannt'
+        print(f"Fehler beim Auflösen von '{key}': {e}")
+        return "Unbekannt"
 
 async def export_pdf(doc, working_dir):
     """Exportiert ein Dokument als PDF mit Retry; bei endgültigem Fehler wird geloggt und übersprungen."""
@@ -1146,13 +1193,15 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     dest_path = os.path.join(working_dir, filename)
     dest_dir = os.path.dirname(dest_path)
 
-    #message(f"DEBUG: FORCE_COPY = {os.environ.get('FORCE_COPY')}", target="both")
+    # Normalize for macOS Unicode edge cases
+    dest_path = _normalize_path(dest_path)
+    dest_dir = _normalize_path(dest_dir)
 
     # Quelle im .all-Ordner finden
-    #message(f"DEBUG: Suche {kind}-Datei von {doc.id} in {all_dir}", target="both")
     src_path = find_cached_file(doc.id, all_dir=all_dir, kind=kind)
     if src_path is None:
         raise FileNotFoundError(f"Keine {kind.upper()}-Datei für Dokument {doc.id} im .all-Verzeichnis gefunden")
+    src_path = _normalize_path(src_path)
 
     os.makedirs(dest_dir, exist_ok=True)
 
@@ -1164,8 +1213,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
     for old_path in existing_files:
         if os.path.abspath(old_path) != os.path.abspath(dest_path):
             try:
-                #message(f"🔁 Entferne alte Datei für doc.id {doc.id}: {old_path}", "both")
-                os.remove(old_path)
+                safe_unlink(old_path)
             except Exception as e:
                 message(f"⚠️ Fehler beim Entfernen alter Datei: {old_path} → {e}", "both")
 
@@ -1174,33 +1222,27 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
         try:
             if os.path.islink(dest_path) and os.path.realpath(dest_path) == os.path.realpath(src_path):
                 return "symlink (OK)"
-            elif os.path.samefile(dest_path, src_path):
+            elif os.path.exists(dest_path) and os.path.samefile(dest_path, src_path):
                 return "hardlink/copy (OK)"
             else:
-                os.remove(dest_path)
-                os.makedirs(dest_dir, exist_ok=True)
+                safe_unlink(dest_path)
         except Exception as e:
             message(f"Fehler beim Entfernen von bestehender Datei: {e}", "both")
-            os.remove(dest_path)
-
-    os.makedirs(dest_dir, exist_ok=True)
+            safe_unlink(dest_path)
 
     # 🔁 Nur kopieren, wenn Umgebungsvariable gesetzt ist
     if force_copy_mode():
         try:
-            #message("🔁 FORCE_COPY aktiv – kopiere Datei", "both")
             shutil.copy2(src_path, dest_path)
             if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
                 return "copy (FORCE)"
         except Exception as e:
-            #message(f"Kopie fehlgeschlagen: {e}", "both")
             raise RuntimeError(f"Konnte Datei nicht kopieren: {src_path}")
 
     # 🔗 Symlink versuchen (relativer Pfad!)
     try:
         rel_src_path = os.path.relpath(src_path, start=dest_dir)
         os.symlink(rel_src_path, dest_path)
-        #message(f"🔗 Symlink zeigt auf (relativ): {rel_src_path}", "both")
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
             return "symlink (neu)"
     except Exception as e:
@@ -1288,7 +1330,7 @@ async def exportThem(paperless, dir, query, max_files, frequency):
         # Daten für die Excel-Tabelle sammeln
         row = OrderedDict([
             ("ID", doc.id),
-            ("Korrespondent", meta["correspondents"][doc.correspondent].name),
+            ("Korrespondent", getmeta("correspondent", doc, meta)),
             ("Titel", doc.title),
             ("Tags", thisTags),
           #  ("StoragePathName", sp_name),
