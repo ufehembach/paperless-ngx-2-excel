@@ -262,7 +262,9 @@ def print_program_header():
 
     print(f"{script_name} {version} – © 2025 {license_id} – {github_url}", end="")
 
-def append_metadata_sheet(
+
+# --- Neue Funktion: build_metadata_dataframe ---
+def build_metadata_dataframe(
     xlsx_path,
     script_version,
     config_data,
@@ -274,7 +276,6 @@ def append_metadata_sheet(
     import platform
     import pandas as pd
     from datetime import datetime
-    from openpyxl import load_workbook
     import importlib.metadata
 
     def add_block(rows, title, entries):
@@ -294,25 +295,21 @@ def append_metadata_sheet(
         os.path.getsize(os.path.join(base_dir, f))
         for f in json_files
         if os.path.isfile(os.path.join(base_dir, f))
-        )
-
+    )
     pdf_bytes = sum(
-    os.path.getsize(os.path.join(base_dir, f))
-    for f in pdf_files
-    if os.path.isfile(os.path.join(base_dir, f))
-        )
-
-    xlsx_size = os.path.getsize(xlsx_path)
+        os.path.getsize(os.path.join(base_dir, f))
+        for f in pdf_files
+        if os.path.isfile(os.path.join(base_dir, f))
+    )
+    xlsx_size = os.path.getsize(xlsx_path) if os.path.exists(xlsx_path) else 0
 
     rows = []
-
     rows = add_block(rows, "📝 Exportinformationen", [
         ("Script-Version", script_version),
         ("Export-Datum", now),
         ("Hostname", socket.gethostname()),
         ("Username", getpass.getuser()),
     ])
-
     rows = add_block(rows, "📁 Verzeichnisse & Dateigrößen", [
         ("Verzeichnis", base_dir),
         ("Excel-Datei", os.path.basename(xlsx_path)),
@@ -322,25 +319,19 @@ def append_metadata_sheet(
         ("Anzahl PDF-Dateien", len(pdf_files)),
         ("Bytes PDF", f"{pdf_bytes/1024:.2f} KB"),
     ])
-
     rows = add_block(rows, "⚙️ Konfiguration (config.ini)", [
         ("Query", config_data.get("query", "(leer)")),
         ("Export Frequency", config_data.get("frequency", "(leer)")),
     ])
-
     installed_packages = sorted(
-      [f"{dist.metadata['Name']}=={dist.version}" for dist in importlib.metadata.distributions()]
-      )[:python_packages_limit]
-
+        [f"{dist.metadata['Name']}=={dist.version}" for dist in importlib.metadata.distributions()]
+    )
     rows = add_block(rows, "🐍 Python Umgebung", [
         ("Python-Version", platform.python_version()),
         ("Top-Module", ', '.join(installed_packages[:python_packages_limit]) + (" ..." if len(installed_packages) > python_packages_limit else "")),
     ])
-
     df_meta = pd.DataFrame(rows, columns=["Betreff", "Inhalt"])
-
-    with pd.ExcelWriter(xlsx_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-        df_meta.to_excel(writer, sheet_name="📊 Metadaten", index=False)
+    return df_meta
 
 def print_separator(char='#', width_ratio=2/3):
     try:
@@ -581,32 +572,7 @@ def parse_date(val):
     # logger.warning(f"[parse_date] Could not parse {s!r}")
     return None
 # ----------------------
-def XXparse_date(date_input):
-    """
-    Gibt das Datum im Format '%d.%m.%Y' zurück, wenn Uhrzeit 00:00 ist,
-    sonst im Format '%d.%m.%Y %H:%M'. Akzeptiert Strings oder datetime-Objekte.
-    """
-    if not date_input:
-        message(f"[parse_date] Date input is empty or None: {date_input}")
-        return None
 
-    try:
-        if isinstance(date_input, datetime):
-            parsed_date = date_input
-        else:
-            parsed_date = parser.isoparse(date_input)
-
-        if parsed_date.hour == 0 and parsed_date.minute == 0:
-            return parsed_date.strftime("%d.%m.%Y")
-        else:
-            return parsed_date.strftime("%d.%m.%Y %H:%M")
-
-    except Exception as e:
-        message(f"[parse_date] Failed to parse date '{date_input}': {e}")
-        return None
-
-# ----------------------
-# ----------------------
 def _default_retry_exceptions():
     import aiohttp, asyncio
     excs = [aiohttp.ClientError, asyncio.TimeoutError, ConnectionResetError, BrokenPipeError]
@@ -894,7 +860,7 @@ def export_json(paperless, doc, working_dir):
 
 # ---------------------- Excel Export Helpers ----------------------
 # ----------------------
-def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta,maxfiles, query, frequency):
+def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta, maxfiles, query, frequency):
     import pandas as pd
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
@@ -908,23 +874,33 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     #base_url = api_url.rstrip("/api")
     base_url = url
 
-    # Ordnerpfad aus file_path extrahieren
-    directory = os.path.dirname(p=file_path)
-    cleanup_old_files(file_path, filename_prefix="##" + directory ,pattern="xlsx",max_count_str=maxfiles)
+    # ---- HISTORY & STATIC EXCEL FILE NAMING (VARIANTE B) ----
+    # Directory + base name
+    directory = os.path.dirname(file_path)
+    base_dirname = os.path.basename(directory)
 
-    # Dateiname vorbereiten
-    fullfilename = file_path
-    # Dateiname vorbereiten (immer mit -0 starten)
-    filename_without_extension, file_extension = os.path.splitext(os.path.basename(file_path))
-    base_filename = f"{filename_without_extension}-0{file_extension}"
-    fullfilename = os.path.join(directory, base_filename)
+    # Today's stamp
+    today = datetime.now().strftime("%Y%m%d")
 
-    # Falls Datei bereits geöffnet oder existiert, iterativ neuen Namen finden
-    counter = 1
-    while os.path.exists(fullfilename):
-        filename = f"{filename_without_extension}-{counter}{file_extension}"
-        fullfilename = os.path.join(directory, filename)
-        counter += 1
+    # History prefix pattern: ##<ordner>-YYYYMMDD
+    history_prefix = f"##{base_dirname}-{today}"
+
+    # Enumerate existing history files ONLY
+    existing = []
+    for f in os.listdir(directory):
+        if f.startswith(history_prefix) and f.endswith(".xlsx"):
+            try:
+                n = int(f.rsplit("-", 1)[1].split(".")[0])
+                existing.append(n)
+            except:
+                pass
+
+    next_num = 0 if not existing else (max(existing) + 1)
+    history_filename = f"{history_prefix}-{next_num}.xlsx"
+    fullfilename = os.path.join(directory, history_filename)
+
+    # STATIC file (never numbered)
+    static_filename = os.path.join(directory, f"##{base_dirname}.xlsx")
 
     # Pandas DataFrame aus document_data erstellen
     df = pd.DataFrame(data)
@@ -947,8 +923,9 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
         header_info = f"{script_name} -- {directory} -- {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} -- {pwd.getpwuid(os.getuid()).pw_name} -- {os.uname().nodename}"
         worksheet["A1"] = header_info
         worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df.columns))  # Header über alle Spalten
-        header_font = Font(bold=True, color="FFFFFF", name="Arial")
-        header_fill = PatternFill(start_color="002060", end_color="002060", fill_type="solid")  # Dunkelblau
+        # Excel-typischer blauer Hintergrund mit weißem Text für den Header
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
         worksheet["A1"].font = header_font
         worksheet["A1"].fill = header_fill
 
@@ -966,8 +943,8 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
         # Spaltentitel (Zeile 3)
         header_row = worksheet[3]
         for cell in header_row:
-            cell.font = Font(bold=True, color="FFFFFF", name="Arial")
-            cell.fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+            cell.font = Font(bold=True, color="000000", name="Arial")
+            cell.fill = PatternFill(start_color="9CC3E5", end_color="9CC3E5", fill_type="solid")
 
         # Autofilter
         worksheet.auto_filter.ref = f"A3:{worksheet.cell(row=3, column=len(df.columns)).coordinate}"
@@ -995,7 +972,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
 
         # Hyperlinks in der ID-Spalte
         # Suche die Spalte basierend auf dem Header in Zeile 3
-        document_column = "ID"  # Der Header-Name für die Spalte mit den Dokument-IDs
+        document_column = "LINK"  # Der Header-Name für die Spalte mit den Dokument-IDs für den link/exp
         id_column_idx = None
         for col_idx, cell in enumerate(worksheet[3], start=1):  # Zeile 3 ist der Header
             if cell.value == document_column:
@@ -1018,13 +995,46 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
             for cell in row:
                 cell.font = default_font
 
-    # Metadaten anhängen
-    append_metadata_sheet(
-        xlsx_path=fullfilename,
-        script_version=get_git_version(),
-        config_data={"query": query, "frequency": frequency}
-    )
+        # Metadaten-DataFrame erzeugen und als neues Blatt anhängen
+        df_meta = build_metadata_dataframe(
+            xlsx_path=fullfilename,
+            script_version=get_git_version(),
+            config_data={"query": query, "frequency": frequency}
+        )
+        df_meta.to_excel(writer, sheet_name="📊 Metadaten", index=False)
+
+        # 🟦 Excel-Hauptdatenblatt als Tabellenobjekt formatieren
+        from openpyxl.worksheet.table import Table, TableStyleInfo
+        sheet_name = "Dokumentenliste"
+        ws = writer.sheets[sheet_name]
+
+        if ws.max_row >= 3:
+            start_row = 3
+            end_row = ws.max_row
+            from openpyxl.utils import get_column_letter
+            last_col = get_column_letter(ws.max_column)
+            table_range = f"A{start_row}:{last_col}{end_row}"
+
+            table = Table(displayName="DocumentTable", ref=table_range)
+
+            style = TableStyleInfo(
+                name="TableStyleLight9",
+                showRowStripes=True,
+                showColumnStripes=False
+            )
+            table.tableStyleInfo = style
+            ws.add_table(table)
+
     message(f"\nExcel-Datei erfolgreich erstellt: {fullfilename}")
+
+    # ---- STATIC FILE UPDATE ----
+    try:
+        if os.path.exists(static_filename) or os.path.islink(static_filename):
+            safe_unlink(static_filename)
+        shutil.copy2(fullfilename, static_filename)
+        message(f"📁 Statische Datei neu erzeugt: {static_filename}")
+    except Exception as e:
+        message(f"⚠️ Fehler beim Erstellen der statischen Datei: {e}", "both")
 
 # ----------------------
 def has_file_from_today(directory):
@@ -1330,6 +1340,7 @@ async def exportThem(paperless, dir, query, max_files, frequency):
         # Daten für die Excel-Tabelle sammeln
         row = OrderedDict([
             ("ID", doc.id),
+            ("LINK", doc.id),
             ("Korrespondent", getmeta("correspondent", doc, meta)),
             ("Titel", doc.title),
             ("Tags", thisTags),
@@ -1376,59 +1387,56 @@ async def exportThem(paperless, dir, query, max_files, frequency):
 
     last_dir = os.path.basename(dir)
     # Use the query for the Excel filename, but sanitize it to remove illegal characters (e.g., '*', '?', etc.).
-    safe_query = sanitize_filename(str(query) if query is not None else "")
-    if not safe_query:
+    #safe_query = sanitize_filename(str(query) if query is not None else "")
+    #if not safe_query:
         # Fallback to directory name if query is empty after sanitization
-        safe_query = sanitize_filename(last_dir)
+    safe_query = sanitize_filename(last_dir)
 
     excel_file = os.path.join(dir, f"##{safe_query}-{datetime.now().strftime('%Y%m%d')}.xlsx")
     #export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta, maxfiles=max_files,query=query, frequency=frequency)
     export_to_excel(document_data, excel_file, get_script_name(), currency_columns=currency_columns, dir=dir, url=url, meta=meta, maxfiles=max_files, query=query, frequency=frequency)
-    cleanup_old_files(dir, "##", max_count_str=max_files, pattern="xlsx")
+    base_dirname = os.path.basename(dir)
+    cleanup_old_files(
+        dir,
+        filename_prefix=f"##{base_dirname}-",
+        max_count_str=max_files,
+        pattern="xlsx"
+    )
 
 #    log_message(progress_log_path, f"dir: {dir}, Documents exported: {len(document_data)}")
 #    print(f"Exported Excel file: {excel_file}")
 
-async def single_build_all_cache(paperless, export_dir, log_path=None):
-    def log(msg):
-        if log_path:
-            message( msg)
+import time
 
-    all_dir = os.path.join(export_dir, ".all")
-    os.makedirs(all_dir, exist_ok=True)
-
-    doc_ids = await retry_async(lambda: paperless.documents.all(), desc="Lade Dokument-IDs")
-
-    done = 0
-    cached = 0
-    bar = tqdm(doc_ids, desc="Dokumente cachen: 0✓ / 0↓", unit="doc")
-
-    for doc_id in bar:
-        doc = await retry_async(lambda: paperless.documents(doc_id), desc=f"Hole Dokument {doc_id}")
-
-        sanitized_title = sanitize_filename(doc.title)
-        pdf_filename = f"{doc.id}--{sanitized_title}.pdf"
-        json_filename = f"{doc.id}--{sanitized_title}.json"
-        pdf_path = os.path.join(all_dir, pdf_filename)
-        json_path = os.path.join(all_dir, json_filename)
-
-        updated = False
-
-        if not os.path.exists(pdf_path):
-            await export_pdf(doc, working_dir=all_dir)
-            updated = True
-        if not os.path.exists(json_path):
-            export_json(paperless=paperless, doc=doc, working_dir=all_dir)
-            updated = True
-
-        if updated:
-            done += 1
+def cache_is_fresh(all_dir: str, max_age_seconds: int = 3600) -> bool:
+    """Prüft, ob der Cache im .all-Verzeichnis jünger als max_age_seconds ist."""
+    ts_file = os.path.join(all_dir, "##cache.timestamp")
+    try:
+        if not os.path.exists(ts_file):
+            return False
+        mtime = os.path.getmtime(ts_file)
+        age = time.time() - mtime
+        if age < max_age_seconds:
+            message(f"🕒 Cache im {all_dir} ist {int(age)}s alt – überspringe Neuaufbau.", "both")
+            return True
         else:
-            cached += 1
+            message(f"♻️ Cache im {all_dir} ist zu alt ({int(age)}s) – wird neu aufgebaut.", "both")
+            return False
+    except Exception as e:
+        message(f"⚠️ Fehler bei Cacheprüfung: {e}", "both")
+        return False
 
-        bar.set_description(f"Dokumente cachen: {cached}✓ / {done}↓")
 
-    message(f"Cache abgeschlossen: {done} neu, {cached} übersprungen.")
+def update_cache_timestamp(all_dir: str):
+    """Setzt oder aktualisiert den Timestamp des Cache."""
+    ts_file = os.path.join(all_dir, "##cache.timestamp")
+    try:
+        with open(ts_file, "w") as f:
+            f.write(str(int(time.time())))
+        message(f"🗓️ Cache-Timestamp aktualisiert ({ts_file})", "log")
+    except Exception as e:
+        message(f"⚠️ Fehler beim Setzen des Cache-Timestamps: {e}", "both")
+
 
 from pypaperless.models.generators.page import Page
 
@@ -1454,6 +1462,10 @@ async def build_all_cache(paperless, export_dir, log_path=None):
 
     all_dir = os.path.join(export_dir, ".all")
     os.makedirs(all_dir, exist_ok=True)
+
+    if cache_is_fresh(all_dir):
+        #message("✅ Cache ist aktuell – überspringe Aufbau", "both")
+        return
 
     # Schneller Count über .all()
     doc_ids = await retry_async(lambda: paperless.documents.all(), desc="Zähle Dokumente")
@@ -1499,6 +1511,9 @@ async def build_all_cache(paperless, export_dir, log_path=None):
             # Fängt alles, damit ein einzelnes Dokument nicht den gesamten Lauf killt
             message(f"Fehler bei Doc {getattr(doc,'id','?')}: {e}", target="log", level="warn")
             bar.update(1)
+
+    update_cache_timestamp(all_dir)
+
 
 def extract_doc_id(filename):
     """Extrahiere die Dokument-ID aus einem Dateinamen wie '874--irgendwas.pdf'."""
