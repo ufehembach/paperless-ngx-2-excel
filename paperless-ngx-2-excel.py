@@ -860,32 +860,117 @@ def export_json(paperless, doc, working_dir):
 
 # ---------------------- Excel Export Helpers ----------------------
 # ----------------------
+def debug_write(df, directory):
+    print("🔧 DEBUG: Isoliere XLSX-Erstellung…")
+
+    path1 = os.path.join(directory, "debug_step1.xlsx")
+    with pd.ExcelWriter(path1, engine="openpyxl") as w:
+        df.to_excel(w, index=False)
+        ws2 = w.book.create_sheet("step1")
+        ws2["A1"] = "Debug sheet for step1"
+
+    path2 = os.path.join(directory, "debug_step2.xlsx")
+    with pd.ExcelWriter(path2, engine="openpyxl") as w:
+        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
+        ws = w.sheets["Dokumentenliste"]
+        ws["A1"] = "HEADER TEST"
+        ws2 = w.book.create_sheet("step2")
+        ws2["A1"] = "Debug sheet for step2"
+
+    path3 = os.path.join(directory, "debug_step3.xlsx")
+    with pd.ExcelWriter(path3, engine="openpyxl") as w:
+        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
+        ws = w.sheets["Dokumentenliste"]
+        ws["A1"] = "HEADER TEST"
+        ws["A2"] = "=1+1"
+        ws2 = w.book.create_sheet("step3")
+        ws2["A1"] = "Debug sheet for step3"
+
+    path4 = os.path.join(directory, "debug_step4.xlsx")
+    with pd.ExcelWriter(path4, engine="openpyxl") as w:
+        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
+        ws = w.sheets["Dokumentenliste"]
+        ws["A1"] = "HEADER TEST"
+        ws["A1"].fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
+        ws2 = w.book.create_sheet("step4")
+        ws2["A1"] = "Debug sheet for step4"
+
+    path5 = os.path.join(directory, "debug_step5.xlsx")
+    with pd.ExcelWriter(path5, engine="openpyxl") as w:
+        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
+        ws = w.sheets["Dokumentenliste"]
+        ws["A1"] = "HEADER TEST"
+        ws["A1"].fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
+        ws["A4"] = '=HYPERLINK("http://x","x")'
+        ws2 = w.book.create_sheet("step5")
+        ws2["A1"] = "Debug sheet for step5"
+
+    # --- HEADER POSITION TEST ---
+    print("🔧 DEBUG: Header-Position-Test…")
+
+    # Variant A: write header to A1 (expected to FAIL / corrupt)
+    pathA = os.path.join(directory, "debug_header_A1.xlsx")
+    with pd.ExcelWriter(pathA, engine="openpyxl") as w:
+        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
+        ws = w.sheets["Dokumentenliste"]
+        ws["A1"] = "HEADER A1 (should corrupt)"
+        ws2 = w.book.create_sheet("stepA")
+        ws2["A1"] = "Debug sheet for stepA"
+
+    # Variant B: write header to A3 (expected OK)
+    pathB = os.path.join(directory, "debug_header_A3.xlsx")
+    with pd.ExcelWriter(pathB, engine="openpyxl") as w:
+        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
+        ws = w.sheets["Dokumentenliste"]
+        ws["A3"] = "HEADER A3 (safe)"
+        ws2 = w.book.create_sheet("stepB")
+        ws2["A1"] = "Debug sheet for stepB"
+
+    # Variant C: write header far away (expected OK)
+    pathC = os.path.join(directory, "debug_header_A100.xlsx")
+    with pd.ExcelWriter(pathC, engine="openpyxl") as w:
+        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
+        ws = w.sheets["Dokumentenliste"]
+        ws["A100"] = "HEADER A100 (safe)"
+        ws2 = w.book.create_sheet("stepC")
+        ws2["A1"] = "Debug sheet for stepC"
+
+    print("➡️ DEBUG-XLSX erstellt.")
+
 def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta, maxfiles, query, frequency):
-    import pandas as pd
+    import re, os, shutil
+    from datetime import datetime
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
+    from openpyxl.worksheet.table import Table, TableStyleInfo
     from openpyxl.formatting.rule import FormulaRule
     from openpyxl.utils import get_column_letter
-    from datetime import datetime
-    import os
     import pwd
 
-    # API-Basis-URL ohne `/api` generieren
-    #base_url = api_url.rstrip("/api")
-    base_url = url
+    # --- COLLECT ALL HEADERS ACROSS ALL DOCUMENTS (global header set) ---
+    all_headers = []
+    header_set = set()
+    for row in data:
+        for k in row.keys():
+            if k not in header_set:
+                header_set.add(k)
+                all_headers.append(k)
 
-    # ---- HISTORY & STATIC EXCEL FILE NAMING (VARIANTE B) ----
-    # Directory + base name
+    # Normalize all rows: ensure each row has all headers (missing -> None)
+    normalized_data = []
+    for row in data:
+        fixed = {}
+        for h in all_headers:
+            fixed[h] = row.get(h, None)
+        normalized_data.append(fixed)
+
+    data = normalized_data
+
     directory = os.path.dirname(file_path)
     base_dirname = os.path.basename(directory)
-
-    # Today's stamp
     today = datetime.now().strftime("%Y%m%d")
 
-    # History prefix pattern: ##<ordner>-YYYYMMDD
     history_prefix = f"##{base_dirname}-{today}"
-
-    # Enumerate existing history files ONLY
     existing = []
     for f in os.listdir(directory):
         if f.startswith(history_prefix) and f.endswith(".xlsx"):
@@ -895,146 +980,152 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
             except:
                 pass
 
-    next_num = 0 if not existing else (max(existing) + 1)
+    next_num = 0 if not existing else max(existing) + 1
     history_filename = f"{history_prefix}-{next_num}.xlsx"
     fullfilename = os.path.join(directory, history_filename)
 
-    # STATIC file (never numbered)
     static_filename = os.path.join(directory, f"##{base_dirname}.xlsx")
 
-    # Pandas DataFrame aus document_data erstellen
-    df = pd.DataFrame(data)
-    if df.empty:
-        print(f"[INFO] Keine Daten gefunden, erstelle leere Excel-Datei mit Platzhalter.")
-        df = pd.DataFrame(columns=["Keine Daten vorhanden"])
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Dokumentenliste"
 
-    # Clean illegal Excel characters from headers and string cells
-    df.columns = [clean_for_excel(str(c)) for c in df.columns]
-    for col in df.columns:
-        if df[col].dtype == object:
-            df[col] = df[col].map(clean_for_excel)
+    header_info = (
+        f"{script_name} -- {directory} -- "
+        f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} -- "
+        f"{pwd.getpwuid(os.getuid()).pw_name} -- {os.uname().nodename}"
+    )
 
-    with pd.ExcelWriter(fullfilename, engine="openpyxl") as writer:
-        # DataFrame in Excel schreiben (ab Zeile 3 für Daten)
-        df.to_excel(writer, index=False, startrow=2, sheet_name="Dokumentenliste")
-        worksheet = writer.sheets["Dokumentenliste"]
+    ws["A1"] = header_info
+    header_cols = len(data[0]) if data else 1
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=header_cols)
+    ws["A1"].font = Font(bold=True, color="FFFFFF")
+    ws["A1"].fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
 
-        # Headerzeile (A1) mit Scriptnamen, Tag und anderen Infos
-        header_info = f"{script_name} -- {directory} -- {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} -- {pwd.getpwuid(os.getuid()).pw_name} -- {os.uname().nodename}"
-        worksheet["A1"] = header_info
-        worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df.columns))  # Header über alle Spalten
-        # Excel-typischer blauer Hintergrund mit weißem Text für den Header
-        header_font = Font(bold=True, color="FFFFFF")
-        header_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
-        worksheet["A1"].font = header_font
-        worksheet["A1"].fill = header_fill
+    if not data:
+        wb.save(fullfilename)
+        return
 
-        # Summenzeilen für Currency-Spalten in Zeile 2
-        for column_name in currency_columns:
-            if column_name in df.columns:
-                col_idx = df.columns.get_loc(column_name) + 1  # Excel-Spaltenindex
-                start_cell = worksheet.cell(row=4, column=col_idx).coordinate
-                end_cell = worksheet.cell(row=worksheet.max_row, column=col_idx).coordinate
-                sum_formula = f"=SUM({start_cell}:{end_cell})"
-                sum_cell = worksheet.cell(row=2, column=col_idx)
-                sum_cell.value = sum_formula
-                sum_cell.font = Font(bold=True)
+    headers = all_headers
+    for col_idx, col_name in enumerate(headers, start=1):
+        cell = ws.cell(row=3, column=col_idx, value=col_name)
+        cell.font = Font(bold=True, color="000000")
+        cell.fill = PatternFill(start_color="9CC3E5", end_color="9CC3E5", fill_type="solid")
 
-        # Spaltentitel (Zeile 3)
-        header_row = worksheet[3]
-        for cell in header_row:
-            cell.font = Font(bold=True, color="000000", name="Arial")
-            cell.fill = PatternFill(start_color="9CC3E5", end_color="9CC3E5", fill_type="solid")
+    row_idx = 4
+    for row in data:
+        for col_idx, col_name in enumerate(headers, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=row[col_name])
+        row_idx += 1
 
-        # Autofilter
-        worksheet.auto_filter.ref = f"A3:{worksheet.cell(row=3, column=len(df.columns)).coordinate}"
+    last_data_row = row_idx - 1
+    last_col_letter = get_column_letter(len(headers))
 
-        # Definiere die Formate für gerade und ungerade Zeilen
-        light_blue_fill = PatternFill(start_color="DCE6F1", end_color="DCE6F1", fill_type="solid")
-        white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-        font = Font(name="Arial", size=11)
+    for col_name in currency_columns:
+        if col_name in headers:
+            col_idx = headers.index(col_name) + 1
+            formula = f"=SUM({get_column_letter(col_idx)}4:{get_column_letter(col_idx)}{last_data_row})"
+            ws.cell(row=2, column=col_idx, value=formula).font = Font(bold=True)
 
-        # Formeln für gerade und ungerade Zeilen
-        formula_even = "MOD(ROW(),2)=0"
-        formula_odd = "MOD(ROW(),2)<>0"
+    if "LINK" in headers:
+        id_col = headers.index("LINK") + 1
+        for r in range(4, last_data_row + 1):
+            doc_id = ws.cell(row=r, column=id_col).value
+            if doc_id:
+                ws.cell(row=r, column=id_col).value = (
+                    f'=HYPERLINK("{url}/documents/{doc_id}/details", "{doc_id}")'
+                )
 
-        # Nur wenn Datenzeilen existieren (mind. Zeile 4)
-        if worksheet.max_row >= 4:
-            range_string = f"A4:{worksheet.cell(row=worksheet.max_row, column=len(df.columns)).coordinate}"
+    light_fill = PatternFill(start_color="DCE6F1", end_color="DCE6F1", fill_type="solid")
+    white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
-            # Gerade Zeilen
-            rule_even = FormulaRule(formula=["MOD(ROW(),2)=0"], fill=light_blue_fill, font=font)
-            worksheet.conditional_formatting.add(range_string, rule_even)
+    data_range = f"A4:{last_col_letter}{last_data_row}"
+    rule_even = FormulaRule(formula=["MOD(ROW(),2)=0"], fill=light_fill)
+    rule_odd = FormulaRule(formula=["MOD(ROW(),2)=1"], fill=white_fill)
+    ws.conditional_formatting.add(data_range, rule_even)
+    ws.conditional_formatting.add(data_range, rule_odd)
 
-            # Ungerade Zeilen
-            rule_odd = FormulaRule(formula=["MOD(ROW(),2)<>0"], fill=white_fill, font=font)
-            worksheet.conditional_formatting.add(range_string, rule_odd)
+    clean_name = re.sub(r"[^A-Za-z0-9]", "", base_dirname)
+    table_name = f"tbl{clean_name}"
 
-        # Hyperlinks in der ID-Spalte
-        # Suche die Spalte basierend auf dem Header in Zeile 3
-        document_column = "LINK"  # Der Header-Name für die Spalte mit den Dokument-IDs für den link/exp
-        id_column_idx = None
-        for col_idx, cell in enumerate(worksheet[3], start=1):  # Zeile 3 ist der Header
-            if cell.value == document_column:
-                id_column_idx = col_idx
-                break
+    table_ref = f"A3:{last_col_letter}{last_data_row}"
+    table = Table(displayName=table_name, ref=table_ref)
+    style = TableStyleInfo(name="TableStyleLight9", showRowStripes=True)
+    table.tableStyleInfo = style
+    ws.add_table(table)
 
-        # Dokument-ID in URLs umwandeln
-        if id_column_idx:  # Wenn die Spalte mit der ID gefunden wurde
-            for row_idx in range(4, worksheet.max_row + 1):  # Daten beginnen in Zeile 4
-                doc_id = worksheet.cell(row=row_idx, column=id_column_idx).value
-                if doc_id:  # Nur wenn ein Wert vorhanden ist
-                    link_formula = f'=HYPERLINK("{base_url}/documents/{doc_id}/details", "{doc_id}")'
-                    worksheet.cell(row=row_idx, column=id_column_idx).value = link_formula
+    # --- Enhanced Metadata Sheet ---
+    ws_meta = wb.create_sheet("📊 Metadaten")
 
-        # Schriftart-Objekt definieren
-        default_font = Font(name="Arial")
+    rows = []
+    r = rows.append
 
-        # Alle Zellen formatieren
-        for row in worksheet.iter_rows(min_row=1, max_row=worksheet.max_row, min_col=1, max_col=worksheet.max_column):
-            for cell in row:
-                cell.font = default_font
+    # 📝 Exportinformationen
+    r(["📝 Exportinformationen", ""])
+    r(["Script-Version", script_name])
+    r(["Export-Datum", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+    r(["Hostname", os.uname().nodename])
+    r(["Username", pwd.getpwuid(os.getuid()).pw_name])
+    r(["", ""])
 
-        # Metadaten-DataFrame erzeugen und als neues Blatt anhängen
-        df_meta = build_metadata_dataframe(
-            xlsx_path=fullfilename,
-            script_version=get_git_version(),
-            config_data={"query": query, "frequency": frequency}
-        )
-        df_meta.to_excel(writer, sheet_name="📊 Metadaten", index=False)
+    # 📁 Verzeichnisse & Dateigrößen
+    xlsx_size = os.path.getsize(fullfilename) if os.path.exists(fullfilename) else 0
+    r(["📁 Verzeichnisse & Dateigrößen", ""])
+    r(["Export-Verzeichnis", directory])
+    r(["Excel-Datei", os.path.basename(fullfilename)])
+    r(["Größe (xlsx)", f"{xlsx_size/1024:.2f} KB"])
+    r(["JSON-Dateien", len([f for f in os.listdir(directory) if f.endswith('.json')])])
+    r(["PDF-Dateien", len([f for f in os.listdir(directory) if f.endswith('.pdf')])])
+    r(["", ""])
 
-        # 🟦 Excel-Hauptdatenblatt als Tabellenobjekt formatieren
-        from openpyxl.worksheet.table import Table, TableStyleInfo
-        sheet_name = "Dokumentenliste"
-        ws = writer.sheets[sheet_name]
+    # ⚙️ Config
+    r(["⚙️ Konfiguration (config.ini)", ""])
+    r(["Query", query])
+    r(["Frequency", frequency])
+    r(["", ""])
 
-        if ws.max_row >= 3:
-            start_row = 3
-            end_row = ws.max_row
-            from openpyxl.utils import get_column_letter
-            last_col = get_column_letter(ws.max_column)
-            table_range = f"A{start_row}:{last_col}{end_row}"
+    # 📊 Dokument-Statistik
+    r(["📊 Dokument-Statistik", ""])
+    r(["Dokumente gesamt", len(data)])
+    r(["Currency-Felder", ", ".join(currency_columns)])
+    r(["Header-Spalten", ", ".join(headers)])
+    r(["", ""])
 
-            table = Table(displayName="DocumentTable", ref=table_range)
+    # 🧩 Custom Fields
+    r(["🧩 Custom Fields", ""])
+    all_custom_fields = [c for c in headers if c not in ("ID","LINK","Korrespondent","Titel","Tags","Seiten","Dokumenttyp","Speicherpfad")]
+    r(["Anzahl Custom Fields", len(all_custom_fields)])
+    r(["Custom Fields", ", ".join(all_custom_fields)])
+    r(["", ""])
 
-            style = TableStyleInfo(
-                name="TableStyleLight9",
-                showRowStripes=True,
-                showColumnStripes=False
-            )
-            table.tableStyleInfo = style
-            ws.add_table(table)
+    # 🐍 Python-Umgebung
+    import importlib.metadata
+    installed_packages = sorted([f"{dist.metadata['Name']}=={dist.version}" for dist in importlib.metadata.distributions()])
+    r(["🐍 Python Umgebung", ""])
+    r(["Python-Version", platform.python_version()])
+    r(["Pakete (Top 10)", ", ".join(installed_packages[:10])])
+    r(["", ""])
 
-    message(f"\nExcel-Datei erfolgreich erstellt: {fullfilename}")
+    # Schreibe alles in das Sheet
+    for row_idx, (colA, colB) in enumerate(rows, start=1):
+        ws_meta.cell(row=row_idx, column=1, value=colA)
+        ws_meta.cell(row=row_idx, column=2, value=colB)
 
-    # ---- STATIC FILE UPDATE ----
+    # Formatierung: fette Titel
+    for i, row in enumerate(rows, start=1):
+        if row[1] == "":
+            ws_meta.cell(row=i, column=1).font = Font(bold=True)
+
+    wb.save(fullfilename)
+
     try:
         if os.path.exists(static_filename) or os.path.islink(static_filename):
             safe_unlink(static_filename)
         shutil.copy2(fullfilename, static_filename)
-        message(f"📁 Statische Datei neu erzeugt: {static_filename}")
     except Exception as e:
         message(f"⚠️ Fehler beim Erstellen der statischen Datei: {e}", "both")
+
+    message(f"Excel-Datei erfolgreich erstellt: {fullfilename}")
 
 # ----------------------
 def has_file_from_today(directory):
