@@ -914,96 +914,73 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Dokumentenliste"
-
-    header_info = (
-        f"{script_name} -- {directory} -- "
-        f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} -- "
-        f"{pwd.getpwuid(os.getuid()).pw_name} -- {os.uname().nodename}"
-    )
-
-    ws["A1"] = header_info
-    header_cols = len(data[0]) if data else 1
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=header_cols)
-    ws["A1"].font = Font(bold=True, color="FFFFFF")
-    ws["A1"].fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+    wb.remove(ws)
+    # Sheet1 removed — no header, no formatting
 
     if not data:
         wb.save(fullfilename)
         return
 
     headers = all_headers
-    for col_idx, col_name in enumerate(headers, start=1):
-        cell = ws.cell(row=3, column=col_idx, value=col_name)
-        cell.font = Font(bold=True, color="000000")
-        cell.fill = PatternFill(start_color="9CC3E5", end_color="9CC3E5", fill_type="solid")
 
+    # Sheet1 disabled — no data written here
     row_idx = 4
+
+    # --- UNFORMATTED TABLE SHEET (A1) ---
+    ws_plain = wb.create_sheet("Tabelle")
+
+    # Write headers at row 1
+    for col_idx, col_name in enumerate(headers, start=1):
+        ws_plain.cell(row=1, column=col_idx, value=col_name)
+
+    # Write data starting at row 2
+    plain_row = 2
     for row in data:
         for col_idx, col_name in enumerate(headers, start=1):
-            ws.cell(row=row_idx, column=col_idx, value=row[col_name])
-        row_idx += 1
+            ws_plain.cell(row=plain_row, column=col_idx, value=row[col_name])
+        plain_row += 1
+
+    from openpyxl.utils import get_column_letter
+    last_plain_row = plain_row - 1
+    last_plain_col = get_column_letter(len(headers))
+    plain_ref = f"A1:{last_plain_col}{last_plain_row}"
+
+    # --- Add working hyperlinks in LINK column ---
+    paperless_url = str(url).rstrip("/")
+    link_col_index = None
+
+    # find LINK column index
+    for idx, h in enumerate(headers, start=1):
+        if h == "LINK":
+            link_col_index = idx
+            break
+
+    if link_col_index:
+        for r in range(2, last_plain_row + 1):
+            doc_id = ws_plain.cell(row=r, column=1).value
+            link_cell = ws_plain.cell(row=r, column=link_col_index)
+            link_cell.value = doc_id
+            link_cell.hyperlink = f"{paperless_url}/documents/{doc_id}"
+            link_cell.style = "Hyperlink"
+
+    # --- UNFORMATTED TABLE: CREATE DATA TABLE WITH STYLE ---
+    data_table = Table(displayName="tblData", ref=plain_ref)
+    style = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True, showColumnStripes=False)
+    data_table.tableStyleInfo = style
+    ws_plain.add_table(data_table)
+
+    message("[DEBUG] Unformatted table sheet created", target="both")
+
+    # debug_path3 = os.path.join(directory, f"##{base_dirname}-state3.xlsx")
+    # wb.save(debug_path3)
+
+    # --- EARLY MAIN TABLE DISABLED (last_col_letter not yet defined) ---
+    # (moved table creation to the correct position after last_col_letter is known)
 
     last_data_row = row_idx - 1
     last_col_letter = get_column_letter(len(headers))
 
-    # --- Autofit column widths ---
-    for col_idx, col_name in enumerate(headers, start=1):
-        max_length = len(str(col_name))
-        for row in range(4, last_data_row + 1):
-            val = ws.cell(row=row, column=col_idx).value
-            if val is not None:
-                max_length = max(max_length, len(str(val)))
-        ws.column_dimensions[get_column_letter(col_idx)].width = max_length + 2
-
-    for col_name in currency_columns:
-        if col_name in headers:
-            col_idx = headers.index(col_name) + 1
-            formula = f"=SUM({get_column_letter(col_idx)}4:{get_column_letter(col_idx)}{last_data_row})"
-            ws.cell(row=2, column=col_idx, value=formula).font = Font(bold=True)
-
-    # --- Number formats ---
-    date_cols = [name for name in headers if name.lower().endswith(("date","datemonth","datefull"))]
-    for col_name in date_cols:
-        idx = headers.index(col_name) + 1
-        for r in range(4, last_data_row + 1):
-            ws.cell(row=r, column=idx).number_format = "YYYY-MM-DD"
-
-    for col_name in currency_columns:
-        if col_name in headers:
-            idx = headers.index(col_name) + 1
-            for r in range(4, last_data_row + 1):
-                ws.cell(row=r, column=idx).number_format = "#,##0.00 €"
-
-    if "LINK" in headers:
-        id_col = headers.index("LINK") + 1
-        for r in range(4, last_data_row + 1):
-            doc_id = ws.cell(row=r, column=id_col).value
-            if doc_id:
-                ws.cell(row=r, column=id_col).value = (
-                    f'=HYPERLINK("{url}/documents/{doc_id}/details", "{doc_id}")'
-                )
-
-    light_fill = PatternFill(start_color="DCE6F1", end_color="DCE6F1", fill_type="solid")
-    white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-
-    data_range = f"A4:{last_col_letter}{last_data_row}"
-    rule_even = FormulaRule(formula=["MOD(ROW(),2)=0"], fill=light_fill)
-    rule_odd = FormulaRule(formula=["MOD(ROW(),2)=1"], fill=white_fill)
-    ws.conditional_formatting.add(data_range, rule_even)
-    ws.conditional_formatting.add(data_range, rule_odd)
-
-    clean_name = re.sub(r"[^A-Za-z0-9]", "", base_dirname)
-    table_name = f"tbl{clean_name}"
-
-    table_ref = f"A3:{last_col_letter}{last_data_row}"
-    # --- Freeze panes ---
-    ws.freeze_panes = "A4"
-    table = Table(displayName=table_name, ref=table_ref)
-    style = TableStyleInfo(name="TableStyleLight9", showRowStripes=True)
-    table.tableStyleInfo = style
-    ws.add_table(table)
-    ws.auto_filter.ref = table_ref
+    # Sheet1 autosize disabled
 
     # --- Enhanced Metadata Sheet ---
     ws_meta = wb.create_sheet("📊 Metadaten")
@@ -1011,9 +988,13 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     rows = []
     r = rows.append
 
+    # HeaderInfo into metadata sheet
+    r(["HeaderInfo", f"{script_name} -- {directory} -- {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} -- {pwd.getpwuid(os.getuid()).pw_name} -- {os.uname().nodename}"])
+    r(["", ""])
     # 📝 Exportinformationen
     r(["📝 Exportinformationen", ""])
-    r(["Script-Version", script_name])
+    from inspect import getsourcefile
+    r(["Script-Version", get_script_version()])
     r(["Export-Datum", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
     r(["Hostname", os.uname().nodename])
     r(["Username", pwd.getpwuid(os.getuid()).pw_name])
@@ -1081,6 +1062,8 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
         if colB == "":
             ws_meta.cell(row=row_idx, column=1).font = Font(bold=True, size=13, color="1F4E79")
 
+    # debug_path5 = os.path.join(directory, f"##{base_dirname}-state5.xlsx")
+    # wb.save(debug_path5)
     wb.save(fullfilename)
 
     try:
