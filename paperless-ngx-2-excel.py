@@ -5,7 +5,6 @@ import sys
 import pwd
 #from networkx import from_prufer_sequence
 import requests
-import pandas as pd
 import inspect
 import argparse
 import json
@@ -35,7 +34,6 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.formatting.rule import FormulaRule
-from openpyxl.utils.dataframe import dataframe_to_rows
 from collections import OrderedDict
 
 from datetime import datetime, timedelta
@@ -263,75 +261,6 @@ def print_program_header():
     print(f"{script_name} {version} – © 2025 {license_id} – {github_url}", end="")
 
 
-# --- Neue Funktion: build_metadata_dataframe ---
-def build_metadata_dataframe(
-    xlsx_path,
-    script_version,
-    config_data,
-    python_packages_limit=10
-):
-    import os
-    import socket
-    import getpass
-    import platform
-    import pandas as pd
-    from datetime import datetime
-    import importlib.metadata
-
-    def add_block(rows, title, entries):
-        rows.append([title, ""])
-        for key, value in entries:
-            rows.append([key, value])
-        rows.append(["", ""])
-        return rows
-
-    # === Basisinfos ===
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    base_dir = os.path.dirname(xlsx_path)
-
-    json_files = [f for f in os.listdir(base_dir) if f.endswith('.json')]
-    pdf_files = [f for f in os.listdir(base_dir) if f.endswith('.pdf')]
-    json_bytes = sum(
-        os.path.getsize(os.path.join(base_dir, f))
-        for f in json_files
-        if os.path.isfile(os.path.join(base_dir, f))
-    )
-    pdf_bytes = sum(
-        os.path.getsize(os.path.join(base_dir, f))
-        for f in pdf_files
-        if os.path.isfile(os.path.join(base_dir, f))
-    )
-    xlsx_size = os.path.getsize(xlsx_path) if os.path.exists(xlsx_path) else 0
-
-    rows = []
-    rows = add_block(rows, "📝 Exportinformationen", [
-        ("Script-Version", script_version),
-        ("Export-Datum", now),
-        ("Hostname", socket.gethostname()),
-        ("Username", getpass.getuser()),
-    ])
-    rows = add_block(rows, "📁 Verzeichnisse & Dateigrößen", [
-        ("Verzeichnis", base_dir),
-        ("Excel-Datei", os.path.basename(xlsx_path)),
-        ("Größe (xlsx)", f"{xlsx_size/1024:.2f} KB"),
-        ("Anzahl JSON-Dateien", len(json_files)),
-        ("Bytes JSON", f"{json_bytes/1024:.2f} KB"),
-        ("Anzahl PDF-Dateien", len(pdf_files)),
-        ("Bytes PDF", f"{pdf_bytes/1024:.2f} KB"),
-    ])
-    rows = add_block(rows, "⚙️ Konfiguration (config.ini)", [
-        ("Query", config_data.get("query", "(leer)")),
-        ("Export Frequency", config_data.get("frequency", "(leer)")),
-    ])
-    installed_packages = sorted(
-        [f"{dist.metadata['Name']}=={dist.version}" for dist in importlib.metadata.distributions()]
-    )
-    rows = add_block(rows, "🐍 Python Umgebung", [
-        ("Python-Version", platform.python_version()),
-        ("Top-Module", ', '.join(installed_packages[:python_packages_limit]) + (" ..." if len(installed_packages) > python_packages_limit else "")),
-    ])
-    df_meta = pd.DataFrame(rows, columns=["Betreff", "Inhalt"])
-    return df_meta
 
 def print_separator(char='#', width_ratio=2/3):
     try:
@@ -862,80 +791,8 @@ def export_json(paperless, doc, working_dir):
 # ----------------------
 def debug_write(df, directory):
     print("🔧 DEBUG: Isoliere XLSX-Erstellung…")
-
-    path1 = os.path.join(directory, "debug_step1.xlsx")
-    with pd.ExcelWriter(path1, engine="openpyxl") as w:
-        df.to_excel(w, index=False)
-        ws2 = w.book.create_sheet("step1")
-        ws2["A1"] = "Debug sheet for step1"
-
-    path2 = os.path.join(directory, "debug_step2.xlsx")
-    with pd.ExcelWriter(path2, engine="openpyxl") as w:
-        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
-        ws = w.sheets["Dokumentenliste"]
-        ws["A1"] = "HEADER TEST"
-        ws2 = w.book.create_sheet("step2")
-        ws2["A1"] = "Debug sheet for step2"
-
-    path3 = os.path.join(directory, "debug_step3.xlsx")
-    with pd.ExcelWriter(path3, engine="openpyxl") as w:
-        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
-        ws = w.sheets["Dokumentenliste"]
-        ws["A1"] = "HEADER TEST"
-        ws["A2"] = "=1+1"
-        ws2 = w.book.create_sheet("step3")
-        ws2["A1"] = "Debug sheet for step3"
-
-    path4 = os.path.join(directory, "debug_step4.xlsx")
-    with pd.ExcelWriter(path4, engine="openpyxl") as w:
-        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
-        ws = w.sheets["Dokumentenliste"]
-        ws["A1"] = "HEADER TEST"
-        ws["A1"].fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
-        ws2 = w.book.create_sheet("step4")
-        ws2["A1"] = "Debug sheet for step4"
-
-    path5 = os.path.join(directory, "debug_step5.xlsx")
-    with pd.ExcelWriter(path5, engine="openpyxl") as w:
-        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
-        ws = w.sheets["Dokumentenliste"]
-        ws["A1"] = "HEADER TEST"
-        ws["A1"].fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
-        ws["A4"] = '=HYPERLINK("http://x","x")'
-        ws2 = w.book.create_sheet("step5")
-        ws2["A1"] = "Debug sheet for step5"
-
-    # --- HEADER POSITION TEST ---
-    print("🔧 DEBUG: Header-Position-Test…")
-
-    # Variant A: write header to A1 (expected to FAIL / corrupt)
-    pathA = os.path.join(directory, "debug_header_A1.xlsx")
-    with pd.ExcelWriter(pathA, engine="openpyxl") as w:
-        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
-        ws = w.sheets["Dokumentenliste"]
-        ws["A1"] = "HEADER A1 (should corrupt)"
-        ws2 = w.book.create_sheet("stepA")
-        ws2["A1"] = "Debug sheet for stepA"
-
-    # Variant B: write header to A3 (expected OK)
-    pathB = os.path.join(directory, "debug_header_A3.xlsx")
-    with pd.ExcelWriter(pathB, engine="openpyxl") as w:
-        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
-        ws = w.sheets["Dokumentenliste"]
-        ws["A3"] = "HEADER A3 (safe)"
-        ws2 = w.book.create_sheet("stepB")
-        ws2["A1"] = "Debug sheet for stepB"
-
-    # Variant C: write header far away (expected OK)
-    pathC = os.path.join(directory, "debug_header_A100.xlsx")
-    with pd.ExcelWriter(pathC, engine="openpyxl") as w:
-        df.to_excel(w, index=False, startrow=2, sheet_name="Dokumentenliste")
-        ws = w.sheets["Dokumentenliste"]
-        ws["A100"] = "HEADER A100 (safe)"
-        ws2 = w.book.create_sheet("stepC")
-        ws2["A1"] = "Debug sheet for stepC"
-
-    print("➡️ DEBUG-XLSX erstellt.")
+    # pandas removed – debug stubs disabled
+    pass
 
 def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta, maxfiles, query, frequency):
     import re, os, shutil
@@ -1021,11 +878,33 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     last_data_row = row_idx - 1
     last_col_letter = get_column_letter(len(headers))
 
+    # --- Autofit column widths ---
+    for col_idx, col_name in enumerate(headers, start=1):
+        max_length = len(str(col_name))
+        for row in range(4, last_data_row + 1):
+            val = ws.cell(row=row, column=col_idx).value
+            if val is not None:
+                max_length = max(max_length, len(str(val)))
+        ws.column_dimensions[get_column_letter(col_idx)].width = max_length + 2
+
     for col_name in currency_columns:
         if col_name in headers:
             col_idx = headers.index(col_name) + 1
             formula = f"=SUM({get_column_letter(col_idx)}4:{get_column_letter(col_idx)}{last_data_row})"
             ws.cell(row=2, column=col_idx, value=formula).font = Font(bold=True)
+
+    # --- Number formats ---
+    date_cols = [name for name in headers if name.lower().endswith(("date","datemonth","datefull"))]
+    for col_name in date_cols:
+        idx = headers.index(col_name) + 1
+        for r in range(4, last_data_row + 1):
+            ws.cell(row=r, column=idx).number_format = "YYYY-MM-DD"
+
+    for col_name in currency_columns:
+        if col_name in headers:
+            idx = headers.index(col_name) + 1
+            for r in range(4, last_data_row + 1):
+                ws.cell(row=r, column=idx).number_format = "#,##0.00 €"
 
     if "LINK" in headers:
         id_col = headers.index("LINK") + 1
@@ -1049,10 +928,13 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     table_name = f"tbl{clean_name}"
 
     table_ref = f"A3:{last_col_letter}{last_data_row}"
+    # --- Freeze panes ---
+    ws.freeze_panes = "A4"
     table = Table(displayName=table_name, ref=table_ref)
     style = TableStyleInfo(name="TableStyleLight9", showRowStripes=True)
     table.tableStyleInfo = style
     ws.add_table(table)
+    ws.auto_filter.ref = table_ref
 
     # --- Enhanced Metadata Sheet ---
     ws_meta = wb.create_sheet("📊 Metadaten")
@@ -1111,10 +993,24 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
         ws_meta.cell(row=row_idx, column=1, value=colA)
         ws_meta.cell(row=row_idx, column=2, value=colB)
 
-    # Formatierung: fette Titel
-    for i, row in enumerate(rows, start=1):
-        if row[1] == "":
-            ws_meta.cell(row=i, column=1).font = Font(bold=True)
+    # --- Style metadata sheet ---
+    from openpyxl.styles import Alignment, Border, Side
+
+    thin = Side(style="thin", color="888888")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for row_idx, (colA, colB) in enumerate(rows, start=1):
+        cell_a = ws_meta.cell(row=row_idx, column=1)
+        cell_b = ws_meta.cell(row=row_idx, column=2)
+        cell_a.alignment = Alignment(vertical="top")
+        cell_b.alignment = Alignment(vertical="top")
+        cell_a.border = border
+        cell_b.border = border
+
+    # style section headers
+    for row_idx, (colA, colB) in enumerate(rows, start=1):
+        if colB == "":
+            ws_meta.cell(row=row_idx, column=1).font = Font(bold=True, size=13, color="1F4E79")
 
     wb.save(fullfilename)
 
