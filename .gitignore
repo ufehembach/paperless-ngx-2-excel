@@ -33,4 +33,4 @@ exports/_*/**/*.pdf
 !.gitignore
 !requirements.txt
 !VERSION
-
+!.version
