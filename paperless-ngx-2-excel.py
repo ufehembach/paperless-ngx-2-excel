@@ -212,15 +212,84 @@ def prepare_logging(log_dir, script_name, max_files):
 # message("Dokument konnte nicht geladen werden", level="warn")
 # message("Verarbeite Dokument 17", inline=True)
 
-def get_git_version(default="v0.0.0"):
+
+# --- Version helpers ---
+def detect_git_version():
     try:
         version = subprocess.check_output(
             ["git", "describe", "--tags", "--always"],
             stderr=subprocess.DEVNULL
-        )
-        return version.decode("utf-8").strip()
+        ).decode("utf-8").strip()
+        return version
     except Exception:
-        return default
+        return None
+
+def read_version_file(path=".version"):
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                return f.read().strip()
+        except:
+            pass
+    return None
+
+def fallback_version():
+    dt = datetime.now().strftime("%Y%m%d-%H%M")
+    return f"v0.0.0-{dt}-nogit"
+
+def get_script_version(version_file=".version"):
+    """
+    Build a version string based on git tag + date + short commit hash.
+    If git is not available, fall back to existing .version or generated fallback.
+    """
+    # Try reading git tag
+    try:
+        tag = subprocess.check_output(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            stderr=subprocess.DEVNULL
+        ).decode("utf-8").strip()
+    except Exception:
+        tag = None
+
+    # Try reading commit hash
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL
+        ).decode("utf-8").strip()
+    except Exception:
+        commit = None
+
+    # Always include timestamp
+    dt = datetime.now().strftime("%Y%m%d-%H%M")
+
+    if tag and commit:
+        version = f"{tag}-{dt}-{commit}"
+        # Create a git tag if possible
+        try:
+            subprocess.run(["git", "tag", "-f", version], check=False)
+        except Exception:
+            pass
+        try:
+            with open(version_file, "w") as f:
+                f.write(version)
+        except:
+            pass
+        return version
+
+    # If git is not available, try reading existing .version
+    file_version = read_version_file(version_file)
+    if file_version:
+        return file_version
+
+    # Create fallback
+    version = f"v0.0.0-{dt}-nogit"
+    try:
+        with open(version_file, "w") as f:
+            f.write(version)
+    except:
+        pass
+    return version
 
 def get_github_repo_info():
     try:
@@ -253,7 +322,7 @@ def get_github_license_identifier(user, repo):
 
 def print_program_header():
     script_name = os.path.basename(__file__)
-    version = get_git_version()
+    version = get_script_version()
     user, repo = get_github_repo_info()
     license_id = get_github_license_identifier(user, repo) if user and repo else "Unbekannt"
     github_url = f"https://github.com/{user}/{repo}" if user and repo else "(kein GitHub-Repo erkannt)"
