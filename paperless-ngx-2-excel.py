@@ -913,13 +913,17 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     static_filename = os.path.join(directory, f"##{base_dirname}.xlsx")
 
     wb = Workbook()
-    ws = wb.active
-    wb.remove(ws)
-    # Sheet1 removed — no header, no formatting
+    # --- ALWAYS KEEP AT LEAST ONE SHEET ---
+    ws_default = wb.active
 
     if not data:
+        ws_default.title = "Keine_Daten"
+        ws_default.cell(row=1, column=1, value="Keine Dokumente gefunden.")
         wb.save(fullfilename)
         return
+
+    # If there IS data → replace default sheet
+    wb.remove(ws_default)
 
     headers = all_headers
 
