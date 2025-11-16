@@ -968,7 +968,8 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
             link_cell.style = "Hyperlink"
 
     # --- UNFORMATTED TABLE: CREATE DATA TABLE WITH STYLE ---
-    data_table = Table(displayName="tblData", ref=plain_ref)
+    table_name = f"tbl{sanitize_filename(base_dirname)}"
+    data_table = Table(displayName=table_name, ref=plain_ref)
     style = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True, showColumnStripes=False)
     data_table.tableStyleInfo = style
     ws_plain.add_table(data_table)
@@ -1418,8 +1419,19 @@ async def exportThem(paperless, dir, query, max_files, frequency):
         # Statt export_pdf / export_json:
         export_dir  = os.path.dirname(dir)
 
-        method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=os.path.join(export_dir, ".all")) 
-        method_json = link_export_file(doc, kind="json", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
+        try:
+            method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
+        except Exception as e:
+            method_pdf = "ERROR"
+            message(f"❌ PDF fehlt für Doc {doc.id}: {e}", target="both", level="warn")
+
+        try:
+            method_json = link_export_file(doc, kind="json", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
+        except Exception as e:
+            method_json = "ERROR"
+            message(f"❌ JSON fehlt für Doc {doc.id}: {e}", target="both", level="warn")
+        #method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=os.path.join(export_dir, ".all")) 
+        #method_json = link_export_file(doc, kind="json", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
 
        # message(f"{doc.id}: PDF → {method_pdf} json → {method_json}", target="both")
 
