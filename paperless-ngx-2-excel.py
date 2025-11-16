@@ -968,7 +968,12 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
             link_cell.style = "Hyperlink"
 
     # --- UNFORMATTED TABLE: CREATE DATA TABLE WITH STYLE ---
-    table_name = f"tbl{sanitize_filename(base_dirname)}"
+    import re
+    raw_tbl = f"{base_dirname}"
+    safe_tbl = re.sub(r'[^A-Za-z0-9]', '', raw_tbl)
+    if not safe_tbl:
+        safe_tbl = "Data"
+    table_name = f"tbl{safe_tbl}"
     data_table = Table(displayName=table_name, ref=plain_ref)
     style = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True, showColumnStripes=False)
     data_table.tableStyleInfo = style
