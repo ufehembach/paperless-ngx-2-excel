@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+from urllib.parse import quote
 import sys
 import pwd
 #from networkx import from_prufer_sequence
@@ -1023,6 +1024,11 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     # ⚙️ Config
     r(["⚙️ Konfiguration (config.ini)", ""])
     r(["Query", query])
+    # Encode query strictly so that spaces, colons, parentheses, etc. don't break Paperless search
+    safe_query = quote(str(query), safe="")
+    r(["Query-Link", f"{paperless_url}/documents/?q={safe_query}"])
+    r(["API-Query-Link", f"{paperless_url}/api/documents/?query={query}"])
+    r(["API-Query-Link-Raw", f"{paperless_url}/api/documents/?query={query}"])
     r(["Frequency", frequency])
     r(["", ""])
 
@@ -1052,6 +1058,18 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     for row_idx, (colA, colB) in enumerate(rows, start=1):
         ws_meta.cell(row=row_idx, column=1, value=colA)
         ws_meta.cell(row=row_idx, column=2, value=colB)
+
+    # --- Convert Query-Link row into real hyperlink + keep raw text ---
+    for row_idx, (colA, colB) in enumerate(rows, start=1):
+        if colA == "Query-Link":
+            cell = ws_meta.cell(row=row_idx, column=2)
+            cell.hyperlink = colB
+            cell.style = "Hyperlink"
+            # Add raw text version one row below
+            ws_meta.insert_rows(row_idx + 1)
+            ws_meta.cell(row=row_idx + 1, column=1, value="Query-Link-Text")
+            ws_meta.cell(row=row_idx + 1, column=2, value=colB)
+            break
 
     # --- Style metadata sheet ---
     from openpyxl.styles import Alignment, Border, Side
@@ -1327,7 +1345,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
 
     raise RuntimeError(f"Zieldatei konnte nicht erstellt werden: {dest_path}")
 
-async def exportThem(paperless, dir, query, max_files, frequency):
+async def exportThem(paperless, dir, query, max_files, frequency, api_url):
     count = 0 
     """Process and export documents"""
     document_data = []
@@ -1340,6 +1358,21 @@ async def exportThem(paperless, dir, query, max_files, frequency):
        lambda: search_documents(paperless, query),
        desc=f"Dokumente für Query '{query}'"
        )
+
+    # --- HARD CLEAN: remove all existing PDF/JSON files in this export directory ---
+    try:
+        removed = 0
+        for fname in os.listdir(dir):
+            if fname.endswith(".pdf") or fname.endswith(".json"):
+                fpath = os.path.join(dir, fname)
+                try:
+                    os.remove(fpath)
+                    removed += 1
+                except Exception as e:
+                    message(f"⚠️ Fehler beim Löschen {fpath}: {e}", target="log")
+        message(f"🧹 HARD CLEAN: {removed} Datei(en) aus {dir} gelöscht.", target="both")
+    except Exception as e:
+        message(f"❌ Fehler beim HARD CLEAN in {dir}: {e}", target="both")
 
     #documents = await retry_async(
     #   lambda: collect_async_iter(paperless.documents.search(query)),
@@ -1412,7 +1445,8 @@ async def exportThem(paperless, dir, query, max_files, frequency):
             ("AddDateFull", format_date(parse_date(doc.added), "yyyy-mm-dd")),
             ("OriginalName", doc.original_file_name),
             ("ArchivedName", doc.archived_file_name),
-            ("Owner", getattr(meta["users"].get(doc.owner), "username", "Unbekannt") if doc.owner else "Unbekannt")
+            ("Owner", getattr(meta["users"].get(doc.owner), "username", "Unbekannt") if doc.owner else "Unbekannt"),
+            ("URL", f"{api_url}/documents/{doc.id}")
         ]
         )
 
@@ -1720,7 +1754,7 @@ async def main():
               #print_separator('·', 0.5)      # 50% der Breite
               print_separator('=', 0.75)      # 50% der Breite
               #print(f"\n{root} {query_value} -> Export ({reason})")
-              await exportThem(paperless=paperless, dir=root, query=query_value, max_files=max_files,frequency=frequency)
+              await exportThem(paperless=paperless, dir=root, query=query_value, max_files=max_files,frequency=frequency, api_url=api_url)
           else:
               #print(f"\n{root} {query_value} -> NOexport ({reason})")
               print_separator('-', 0.75)      # 50% der Breite
