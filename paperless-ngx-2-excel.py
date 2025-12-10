@@ -778,7 +778,11 @@ def getmeta(key, doc, meta):
 async def export_pdf(doc, working_dir):
     """Exportiert ein Dokument als PDF mit Retry; bei endgültigem Fehler wird geloggt und übersprungen."""
     sanitized_title = sanitize_filename(doc.title)
-    filename = f"{doc.id}--{sanitized_title}.pdf"
+    correspondent_name = "Unbekannt"
+    if _paperless_meta_cache:
+        correspondent_name = getmeta("correspondent", doc, _paperless_meta_cache)
+    sanitized_correspondent = sanitize_filename(correspondent_name)
+    filename = f"{doc.id}--{sanitized_correspondent}--{sanitized_title}.pdf"
     pdf_path = os.path.join(working_dir, filename)
 
     try:
@@ -850,7 +854,11 @@ def get_document_json(paperless,doc):
 def export_json(paperless, doc, working_dir):
     """Export a document's metadata as JSON."""
     sanitized_title = sanitize_filename(doc.title)
-    filename = f"{doc.id}--{sanitized_title}.json"
+    correspondent_name = "Unbekannt"
+    if _paperless_meta_cache:
+        correspondent_name = getmeta("correspondent", doc, _paperless_meta_cache)
+    sanitized_correspondent = sanitize_filename(correspondent_name)
+    filename = f"{doc.id}--{sanitized_correspondent}--{sanitized_title}.json"
     json_path = os.path.join(working_dir, filename)
 
     detailed_doc = get_document_json(paperless=paperless, doc=doc)
