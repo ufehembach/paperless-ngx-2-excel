@@ -1272,9 +1272,17 @@ import shutil
 import glob
 
 def link_export_file(doc, kind, working_dir, all_dir=".all"):
+    """
+    Links a cached file (pdf/json) from the .all directory to the working directory.
+    The filename will be in the format: [ID]--[Correspondent]--[Title].[kind]
+    """
     assert kind in ("pdf", "json")
 
-    filename = f"{doc.id}--{sanitize_filename(doc.title)}.{kind}"
+    correspondent_name = getmeta("correspondent", doc, _paperless_meta_cache) or "Unbekannt"
+    sanitized_correspondent = sanitize_filename(correspondent_name)
+    sanitized_title = sanitize_filename(doc.title)
+
+    filename = f"{doc.id}--{sanitized_correspondent}--{sanitized_title}.{kind}"
     dest_path = os.path.join(working_dir, filename)
     dest_dir = os.path.dirname(dest_path)
 
@@ -1579,9 +1587,13 @@ async def build_all_cache(paperless, export_dir, log_path=None):
 
     async for doc in safe_document_iterator(paperless):
         try:
+            correspondent_name = getmeta("correspondent", doc, _paperless_meta_cache) or "Unbekannt"
+            sanitized_correspondent = sanitize_filename(correspondent_name)
             sanitized_title = sanitize_filename(doc.title)
-            pdf_filename = f"{doc.id}--{sanitized_title}.pdf"
-            json_filename = f"{doc.id}--{sanitized_title}.json"
+
+            pdf_filename = f"{doc.id}--{sanitized_correspondent}--{sanitized_title}.pdf"
+            json_filename = f"{doc.id}--{sanitized_correspondent}--{sanitized_title}.json"
+
             pdf_path = os.path.join(all_dir, pdf_filename)
             json_path = os.path.join(all_dir, json_filename)
 
