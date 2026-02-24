@@ -868,8 +868,7 @@ def export_json(paperless, doc, working_dir):
 # ---------------------- Excel Export Helpers ----------------------
 # ----------------------
 def debug_write(df, directory):
-    print("🔧 DEBUG: Isoliere XLSX-Erstellung…")
-    # pandas removed – debug stubs disabled
+    # Debug-Stubs deaktiviert
     pass
 
 def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta, maxfiles, query, frequency):
@@ -922,84 +921,84 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     static_filename = os.path.join(directory, f"##{base_dirname}.xlsx")
 
     wb = Workbook()
-    # --- ALWAYS KEEP AT LEAST ONE SHEET ---
     ws_default = wb.active
+    data_present = bool(data)
 
-    if not data:
+    if not data_present:
         ws_default.title = "Keine_Daten"
         ws_default.cell(row=1, column=1, value="Keine Dokumente gefunden.")
-        wb.save(fullfilename)
-        return
-
-    # If there IS data → replace default sheet
-    wb.remove(ws_default)
+    else:
+        # If there IS data → replace default sheet
+        wb.remove(ws_default)
 
     headers = all_headers
 
     # Sheet1 disabled — no data written here
     row_idx = 4
 
-    # --- UNFORMATTED TABLE SHEET (A1) ---
-    ws_plain = wb.create_sheet("Tabelle")
-
-    # Write headers at row 1
-    for col_idx, col_name in enumerate(headers, start=1):
-        ws_plain.cell(row=1, column=col_idx, value=col_name)
-
-    # Write data starting at row 2
-    plain_row = 2
-    for row in data:
-        for col_idx, col_name in enumerate(headers, start=1):
-            ws_plain.cell(row=plain_row, column=col_idx, value=row[col_name])
-        plain_row += 1
-
-    from openpyxl.utils import get_column_letter
-    last_plain_row = plain_row - 1
-    last_plain_col = get_column_letter(len(headers))
-    plain_ref = f"A1:{last_plain_col}{last_plain_row}"
-
-    # --- Add working hyperlinks in LINK column ---
     paperless_url = str(url).rstrip("/")
-    link_col_index = None
 
-    # find LINK column index
-    for idx, h in enumerate(headers, start=1):
-        if h == "LINK":
-            link_col_index = idx
-            break
+    # --- UNFORMATTED TABLE SHEET (A1) ---
+    if data_present:
+        ws_plain = wb.create_sheet("Tabelle")
 
-    if link_col_index:
-        for r in range(2, last_plain_row + 1):
-            doc_id = ws_plain.cell(row=r, column=1).value
-            link_cell = ws_plain.cell(row=r, column=link_col_index)
-            link_cell.value = doc_id
-            link_cell.hyperlink = f"{paperless_url}/documents/{doc_id}"
-            link_cell.style = "Hyperlink"
+        # Write headers at row 1
+        for col_idx, col_name in enumerate(headers, start=1):
+            ws_plain.cell(row=1, column=col_idx, value=col_name)
 
-    # --- UNFORMATTED TABLE: CREATE DATA TABLE WITH STYLE ---
-    import re
-    raw_tbl = f"{base_dirname}"
-    safe_tbl = re.sub(r'[^A-Za-z0-9]', '', raw_tbl)
-    if not safe_tbl:
-        safe_tbl = "Data"
-    table_name = f"tbl{safe_tbl}"
-    data_table = Table(displayName=table_name, ref=plain_ref)
-    style = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True, showColumnStripes=False)
-    data_table.tableStyleInfo = style
-    ws_plain.add_table(data_table)
+        # Write data starting at row 2
+        plain_row = 2
+        for row in data:
+            for col_idx, col_name in enumerate(headers, start=1):
+                ws_plain.cell(row=plain_row, column=col_idx, value=row[col_name])
+            plain_row += 1
 
-    message("[DEBUG] Unformatted table sheet created", target="both")
+        from openpyxl.utils import get_column_letter
+        last_plain_row = plain_row - 1
+        last_plain_col = get_column_letter(len(headers))
+        plain_ref = f"A1:{last_plain_col}{last_plain_row}"
 
-    # debug_path3 = os.path.join(directory, f"##{base_dirname}-state3.xlsx")
-    # wb.save(debug_path3)
+        # --- Add working hyperlinks in LINK column ---
+        link_col_index = None
 
-    # --- EARLY MAIN TABLE DISABLED (last_col_letter not yet defined) ---
-    # (moved table creation to the correct position after last_col_letter is known)
+        # find LINK column index
+        for idx, h in enumerate(headers, start=1):
+            if h == "LINK":
+                link_col_index = idx
+                break
 
-    last_data_row = row_idx - 1
-    last_col_letter = get_column_letter(len(headers))
+        if link_col_index:
+            for r in range(2, last_plain_row + 1):
+                doc_id = ws_plain.cell(row=r, column=1).value
+                link_cell = ws_plain.cell(row=r, column=link_col_index)
+                link_cell.value = doc_id
+                link_cell.hyperlink = f"{paperless_url}/documents/{doc_id}"
+                link_cell.style = "Hyperlink"
 
-    # Sheet1 autosize disabled
+        # --- UNFORMATTED TABLE: CREATE DATA TABLE WITH STYLE ---
+        import re
+        raw_tbl = f"{base_dirname}"
+        safe_tbl = re.sub(r'[^A-Za-z0-9]', '', raw_tbl)
+        if not safe_tbl:
+            safe_tbl = "Data"
+        table_name = f"tbl{safe_tbl}"
+        data_table = Table(displayName=table_name, ref=plain_ref)
+        style = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True, showColumnStripes=False)
+        data_table.tableStyleInfo = style
+        ws_plain.add_table(data_table)
+
+        # Table sheet created (silent)
+
+        # debug_path3 = os.path.join(directory, f"##{base_dirname}-state3.xlsx")
+        # wb.save(debug_path3)
+
+        # --- EARLY MAIN TABLE DISABLED (last_col_letter not yet defined) ---
+        # (moved table creation to the correct position after last_col_letter is known)
+
+        last_data_row = row_idx - 1
+        last_col_letter = get_column_letter(len(headers))
+
+        # Sheet1 autosize disabled
 
     # --- Enhanced Metadata Sheet ---
     ws_meta = wb.create_sheet("📊 Metadaten")
@@ -1032,10 +1031,10 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     # ⚙️ Config
     r(["⚙️ Konfiguration (config.ini)", ""])
     r(["Query", query])
-    # Encode query strictly so that spaces, colons, parentheses, etc. don't break Paperless search
+    # Encode query strictly so that spaces, quotes, greater/less etc. don't break hyperlinks
     safe_query = quote(str(query), safe="")
     r(["Query-Link", f"{paperless_url}/documents/?q={safe_query}"])
-    r(["API-Query-Link", f"{paperless_url}/api/documents/?query={query}"])
+    r(["API-Query-Link", f"{paperless_url}/api/documents/?query={safe_query}"])
     r(["API-Query-Link-Raw", f"{paperless_url}/api/documents/?query={query}"])
     r(["Frequency", frequency])
     r(["", ""])
@@ -1054,30 +1053,62 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     r(["Custom Fields", ", ".join(all_custom_fields)])
     r(["", ""])
 
+    # --- Meta lists (horizontal) ---
+    def meta_names(meta_section):
+        try:
+            return [getattr(v, "name", str(k)) for k, v in (meta.get(meta_section) or {}).items()]
+        except Exception:
+            return []
+
+    def add_horizontal_list(title, items):
+        items_sorted = sorted(set(filter(None, items)))
+        r([f"{title} (Anzahl)", len(items_sorted)])
+        r([title, ""] + items_sorted)
+        r(["", ""])
+
+    add_horizontal_list("Storage Paths", meta_names("storage_paths"))
+    add_horizontal_list("Korrespondenten", meta_names("correspondents"))
+    add_horizontal_list("Dokumenttypen", meta_names("document_types"))
+    add_horizontal_list("Tags", meta_names("tags"))
+    add_horizontal_list("Custom Fields (Meta)", meta_names("custom_fields"))
+
     # 🐍 Python-Umgebung
     import importlib.metadata
-    installed_packages = sorted([f"{dist.metadata['Name']}=={dist.version}" for dist in importlib.metadata.distributions()])
+    installed_packages = []
+    for dist in importlib.metadata.distributions():
+        name = dist.metadata.get("Name") or getattr(dist, "name", "unknown")
+        version = dist.version or "unknown"
+        installed_packages.append(f"{name}=={version}")
+    installed_packages = sorted(installed_packages)
     r(["🐍 Python Umgebung", ""])
     r(["Python-Version", platform.python_version()])
     r(["Pakete (Top 10)", ", ".join(installed_packages[:10])])
     r(["", ""])
 
-    # Schreibe alles in das Sheet
-    for row_idx, (colA, colB) in enumerate(rows, start=1):
-        ws_meta.cell(row=row_idx, column=1, value=colA)
-        ws_meta.cell(row=row_idx, column=2, value=colB)
+    # Schreibe alles in das Sheet (beliebig viele Spalten)
+    for row_idx, row in enumerate(rows, start=1):
+        for col_idx, value in enumerate(row, start=1):
+            ws_meta.cell(row=row_idx, column=col_idx, value=value)
 
-    # --- Convert Query-Link row into real hyperlink + keep raw text ---
-    for row_idx, (colA, colB) in enumerate(rows, start=1):
-        if colA == "Query-Link":
+    # --- Convert query/api rows into clickable hyperlinks + keep raw text ---
+    hyperlink_fields = {"Query-Link": "Query-Link-Text",
+                        "API-Query-Link": "API-Query-Link-Text",
+                        "API-Query-Link-Raw": "API-Query-Link-Raw-Text"}
+
+    # Walk from bottom to top so inserted rows don't shift upcoming indices
+    for row_idx in range(len(rows), 0, -1):
+        row = rows[row_idx - 1]
+        if len(row) < 2:
+            continue
+        colA, colB = row[0], row[1]
+        if colA in hyperlink_fields:
             cell = ws_meta.cell(row=row_idx, column=2)
             cell.hyperlink = colB
             cell.style = "Hyperlink"
-            # Add raw text version one row below
+            insert_label = hyperlink_fields[colA]
             ws_meta.insert_rows(row_idx + 1)
-            ws_meta.cell(row=row_idx + 1, column=1, value="Query-Link-Text")
+            ws_meta.cell(row=row_idx + 1, column=1, value=insert_label)
             ws_meta.cell(row=row_idx + 1, column=2, value=colB)
-            break
 
     # --- Style metadata sheet ---
     from openpyxl.styles import Alignment, Border, Side
@@ -1085,17 +1116,15 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     thin = Side(style="thin", color="888888")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    for row_idx, (colA, colB) in enumerate(rows, start=1):
-        cell_a = ws_meta.cell(row=row_idx, column=1)
-        cell_b = ws_meta.cell(row=row_idx, column=2)
-        cell_a.alignment = Alignment(vertical="top")
-        cell_b.alignment = Alignment(vertical="top")
-        cell_a.border = border
-        cell_b.border = border
+    for row_idx, row in enumerate(rows, start=1):
+        for col_idx in range(1, len(row) + 1):
+            cell = ws_meta.cell(row=row_idx, column=col_idx)
+            cell.alignment = Alignment(vertical="top")
+            cell.border = border
 
     # style section headers
-    for row_idx, (colA, colB) in enumerate(rows, start=1):
-        if colB == "":
+    for row_idx, row in enumerate(rows, start=1):
+        if len(row) >= 2 and row[1] == "":
             ws_meta.cell(row=row_idx, column=1).font = Font(bold=True, size=13, color="1F4E79")
 
     # debug_path5 = os.path.join(directory, f"##{base_dirname}-state5.xlsx")
@@ -1109,7 +1138,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     except Exception as e:
         message(f"⚠️ Fehler beim Erstellen der statischen Datei: {e}", "both")
 
-    message(f"Excel-Datei erfolgreich erstellt: {fullfilename}")
+    # Excel erstellt – Ausgabe erfolgt später im Aufrufer
 
 # ----------------------
 def has_file_from_today(directory):
@@ -1375,7 +1404,7 @@ async def exportThem(paperless, dir, query, max_files, frequency, api_url):
        desc=f"Dokumente für Query '{query}'"
        )
 
-    # --- HARD CLEAN: remove all existing PDF/JSON files in this export directory ---
+    # --- REMOVE OLD FILES: optional cleanup (keine Debug-Ausgabe) ---
     try:
         removed = 0
         for fname in os.listdir(dir):
@@ -1386,16 +1415,16 @@ async def exportThem(paperless, dir, query, max_files, frequency, api_url):
                     removed += 1
                 except Exception as e:
                     message(f"⚠️ Fehler beim Löschen {fpath}: {e}", target="log")
-        message(f"🧹 HARD CLEAN: {removed} Datei(en) aus {dir} gelöscht.", target="both")
+        message(f"🧹 Entfernt: {removed} Datei(en) aus {dir}", target="log")
     except Exception as e:
-        message(f"❌ Fehler beim HARD CLEAN in {dir}: {e}", target="both")
+        message(f"❌ Fehler beim Aufräumen in {dir}: {e}", target="log")
 
     #documents = await retry_async(
     #   lambda: collect_async_iter(paperless.documents.search(query)),
     #    desc=f"Dokumente für Query '{query}'"
     #)
 
-    for doc in tqdm(documents, desc=f"Processing documents for '{dir} with {query}'", unit="doc"):
+    for doc in tqdm(documents, desc=None, unit="doc", disable=True):
         count += 1
 
         # Metadaten optional abrufen (standardmäßig AUS, wegen pypaperless 5.x Validierung)
@@ -1505,6 +1534,11 @@ async def exportThem(paperless, dir, query, max_files, frequency, api_url):
     excel_file = os.path.join(dir, f"##{safe_query}-{datetime.now().strftime('%Y%m%d')}.xlsx")
     #export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta, maxfiles=max_files,query=query, frequency=frequency)
     export_to_excel(document_data, excel_file, get_script_name(), currency_columns=currency_columns, dir=dir, url=url, meta=meta, maxfiles=max_files, query=query, frequency=frequency)
+    pdf_count = len([f for f in os.listdir(dir) if f.lower().endswith(".pdf")])
+    excel_name = os.path.basename(excel_file)
+    parent_name = os.path.basename(dir.rstrip(os.sep))
+    print(f"+ {parent_name}: Excel erstellt – PDFs={pdf_count} | Datei={excel_name}")
+    print()  # gewünschte Leerzeile nach Export-Ausgabe
     base_dirname = os.path.basename(dir)
     cleanup_old_files(
         dir,
@@ -1667,7 +1701,6 @@ def is_remote_newer(remote_modified_str, local_path):
 
 async def main():
     print_program_header()
-    print_separator('=', 0.75)
 
     script_name = get_script_name()
     config = load_config_from_script()
@@ -1766,18 +1799,13 @@ async def main():
               frequency = 'daily'
 
           should_run, reason = should_export(root, frequency, config_mtime)
-          message(f"{root} : {query_value} -> ({reason})", target="both")
+          decision = "Export" if should_run else "Skip"
+          symbol = "+" if should_run else "="
+          display_dir = os.path.basename(root) or root
+          print(f"{symbol} {display_dir} ({reason})")
           if should_run:
-              #print_separator('#')           # #######...
-              #print_separator('##')          # ## ## ## ...
-              #print_separator('=')           # ==========...
-              #print_separator('·', 0.5)      # 50% der Breite
-              print_separator('=', 0.75)      # 50% der Breite
-              #print(f"\n{root} {query_value} -> Export ({reason})")
               await exportThem(paperless=paperless, dir=root, query=query_value, max_files=max_files,frequency=frequency, api_url=api_url)
-          else:
-              #print(f"\n{root} {query_value} -> NOexport ({reason})")
-              print_separator('-', 0.75)      # 50% der Breite
+          # Keine Separator-Ausgabe mehr – sauberere Konsole
 
     except Exception as e:
         message(f"Error: {str(e)}", target="both")
