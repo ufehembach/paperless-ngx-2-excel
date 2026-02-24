@@ -621,7 +621,9 @@ def should_export(export_dir: str, frequency: str, config_mtime: float) -> tuple
     latest_xlsx_mtime = None
 
     for fname in os.listdir(export_dir):
-        if fname.startswith(f"##{base_name}-") and fname.endswith(".xlsx"):
+        if fname.endswith(".xlsx") and (
+            fname.startswith(f"{base_name}-") or fname == f"{base_name}.xlsx"
+        ):
             fpath = os.path.join(export_dir, fname)
             mtime = os.path.getmtime(fpath)
             if latest_xlsx_mtime is None or mtime > latest_xlsx_mtime:
@@ -871,7 +873,7 @@ def debug_write(df, directory):
     # Debug-Stubs deaktiviert
     pass
 
-def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta, maxfiles, query, frequency):
+def export_to_excel(data, file_path, script_name, currency_columns, dir, url, meta, maxfiles, query, custom_field_query, frequency):
     import re, os, shutil
     from datetime import datetime
     from openpyxl import Workbook
@@ -904,7 +906,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     base_dirname = os.path.basename(directory)
     today = datetime.now().strftime("%Y%m%d")
 
-    history_prefix = f"##{base_dirname}-{today}"
+    history_prefix = f"{base_dirname}-{today}"
     existing = []
     for f in os.listdir(directory):
         if f.startswith(history_prefix) and f.endswith(".xlsx"):
@@ -918,7 +920,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     history_filename = f"{history_prefix}-{next_num}.xlsx"
     fullfilename = os.path.join(directory, history_filename)
 
-    static_filename = os.path.join(directory, f"##{base_dirname}.xlsx")
+    static_filename = os.path.join(directory, f"{base_dirname}.xlsx")
 
     wb = Workbook()
     ws_default = wb.active
@@ -1033,8 +1035,10 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     r(["Query", query])
     # Encode query strictly so that spaces, quotes, greater/less etc. don't break hyperlinks
     safe_query = quote(str(query), safe="")
-    r(["Query-Link", f"{paperless_url}/documents/?q={safe_query}"])
+    safe_cf_query = quote(str(custom_field_query), safe="") if custom_field_query else None
     r(["API-Query-Link", f"{paperless_url}/api/documents/?query={safe_query}"])
+    if custom_field_query:
+        r(["API-Query-Link-CF", f"{paperless_url}/api/documents/?query={safe_query}&custom_field_query={safe_cf_query}"])
     r(["API-Query-Link-Raw", f"{paperless_url}/api/documents/?query={query}"])
     r(["Frequency", frequency])
     r(["", ""])
@@ -1265,8 +1269,8 @@ async def get_documents_with_retry(paperless, query):
 async def collect_async_iter(aiter):
     return [item async for item in aiter]
 
-async def search_documents(paperless, query):
-    return [item async for item in paperless.documents.search(query)]
+async def search_documents(paperless, query=None):
+    return [item async for item in paperless.documents.search(query or "")]
 
 def find_cached_file(doc_id, all_dir, kind):
     """Findet Datei im .all-Verzeichnis anhand von doc_id und Dateityp ('pdf' oder 'json')"""
@@ -1390,7 +1394,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
 
     raise RuntimeError(f"Zieldatei konnte nicht erstellt werden: {dest_path}")
 
-async def exportThem(paperless, dir, query, max_files, frequency, api_url):
+async def exportThem(paperless, dir, query, custom_field_query, max_files, frequency, api_url):
     count = 0 
     """Process and export documents"""
     document_data = []
@@ -1399,9 +1403,17 @@ async def exportThem(paperless, dir, query, max_files, frequency, api_url):
     meta = await fetch_paperless_meta(paperless)
 
 #    documents = [item async for item in paperless.documents.search(query)]
+    combined_query = None
+    if query and custom_field_query:
+        combined_query = f"({query}) AND ({custom_field_query})"
+    elif custom_field_query:
+        combined_query = custom_field_query
+    else:
+        combined_query = query
+
     documents = await retry_async(
-       lambda: search_documents(paperless, query),
-       desc=f"Dokumente für Query '{query}'"
+       lambda: search_documents(paperless, query=combined_query),
+       desc=f"Dokumente für Query '{combined_query}'"
        )
 
     # --- REMOVE OLD FILES: optional cleanup (keine Debug-Ausgabe) ---
@@ -1531,9 +1543,9 @@ async def exportThem(paperless, dir, query, max_files, frequency, api_url):
         # Fallback to directory name if query is empty after sanitization
     safe_query = sanitize_filename(last_dir)
 
-    excel_file = os.path.join(dir, f"##{safe_query}-{datetime.now().strftime('%Y%m%d')}.xlsx")
+    excel_file = os.path.join(dir, f"{safe_query}-{datetime.now().strftime('%Y%m%d')}.xlsx")
     #export_to_excel(document_data, excel_file, get_script_name, currency_columns=currency_columns,dir=dir, url=url,meta=meta, maxfiles=max_files,query=query, frequency=frequency)
-    export_to_excel(document_data, excel_file, get_script_name(), currency_columns=currency_columns, dir=dir, url=url, meta=meta, maxfiles=max_files, query=query, frequency=frequency)
+    export_to_excel(document_data, excel_file, get_script_name(), currency_columns=currency_columns, dir=dir, url=url, meta=meta, maxfiles=max_files, query=query, custom_field_query=custom_field_query, frequency=frequency)
     pdf_count = len([f for f in os.listdir(dir) if f.lower().endswith(".pdf")])
     excel_name = os.path.basename(excel_file)
     parent_name = os.path.basename(dir.rstrip(os.sep))
@@ -1542,7 +1554,7 @@ async def exportThem(paperless, dir, query, max_files, frequency, api_url):
     base_dirname = os.path.basename(dir)
     cleanup_old_files(
         dir,
-        filename_prefix=f"##{base_dirname}-",
+        filename_prefix=f"{base_dirname}-",
         max_count_str=max_files,
         pattern="xlsx"
     )
@@ -1783,15 +1795,20 @@ async def main():
             continue
 
           config_mtime = 0  # oder datetime.min.timestamp()
-          if '##config.ini' in files:
-              config_path = os.path.join(root, '##config.ini')
-              config = configparser.ConfigParser()
-           #   config.read(config_path)
-              config=load_config(config_path=config_path)
+          config = configparser.ConfigParser()
+          if 'config.ini' in files:
+              config_path = os.path.join(root, 'config.ini')
+              #   config.read(config_path)
+              config = load_config(config_path=config_path) or config
               config_mtime = os.path.getmtime(config_path)
+
+          custom_field_query = None
 
           if 'DATA' in config and 'query' in config['DATA']:
               query_value = config['DATA']['query']
+
+          if 'DATA' in config and 'custom_field_query' in config['DATA']:
+              custom_field_query = config['DATA']['custom_field_query']
 
           if 'EXPORT' in config and 'frequency' in config['EXPORT']:
               frequency = config['EXPORT']['frequency']
@@ -1804,7 +1821,7 @@ async def main():
           display_dir = os.path.basename(root) or root
           print(f"{symbol} {display_dir} ({reason})")
           if should_run:
-              await exportThem(paperless=paperless, dir=root, query=query_value, max_files=max_files,frequency=frequency, api_url=api_url)
+              await exportThem(paperless=paperless, dir=root, query=query_value, custom_field_query=custom_field_query, max_files=max_files,frequency=frequency, api_url=api_url)
           # Keine Separator-Ausgabe mehr – sauberere Konsole
 
     except Exception as e:
