@@ -779,12 +779,7 @@ def getmeta(key, doc, meta):
 
 async def export_pdf(doc, working_dir):
     """Exportiert ein Dokument als PDF mit Retry; bei endgültigem Fehler wird geloggt und übersprungen."""
-    sanitized_title = sanitize_filename(doc.title)
-    correspondent_name = "Unbekannt"
-    if _paperless_meta_cache:
-        correspondent_name = getmeta("correspondent", doc, _paperless_meta_cache)
-    sanitized_correspondent = sanitize_filename(correspondent_name)
-    filename = f"{doc.id}--{sanitized_correspondent}--{sanitized_title}.pdf"
+    filename = build_export_filename(doc, kind="pdf", meta_cache=_paperless_meta_cache)
     pdf_path = os.path.join(working_dir, filename)
 
     try:
@@ -825,6 +820,32 @@ def sanitize_filename(filename):
 
     return sanitized
 
+def build_export_filename(doc, kind, meta_cache=None):
+    """
+    Build a consistent export filename including document type, correspondent, and title.
+    Pattern: <id>--<document_type>--<correspondent>--<title>.<kind>
+    """
+    meta = meta_cache or _paperless_meta_cache
+
+    doc_type_name = "Unbekannt"
+    correspondent_name = "Unbekannt"
+
+    if meta:
+        try:
+            doc_type_name = getmeta("document_type", doc, meta) or "Unbekannt"
+        except Exception:
+            pass
+        try:
+            correspondent_name = getmeta("correspondent", doc, meta) or "Unbekannt"
+        except Exception:
+            pass
+
+    sanitized_type = sanitize_filename(doc_type_name)
+    sanitized_correspondent = sanitize_filename(correspondent_name)
+    sanitized_title = sanitize_filename(doc.title)
+
+    return f"{doc.id}--{sanitized_type}--{sanitized_correspondent}--{sanitized_title}.{kind}"
+
 # Remove characters not allowed by Excel (control chars 0x00-0x1F except tab/newline/carriage return)
 _XL_ILLEGAL_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
 
@@ -855,12 +876,7 @@ def get_document_json(paperless,doc):
 
 def export_json(paperless, doc, working_dir):
     """Export a document's metadata as JSON."""
-    sanitized_title = sanitize_filename(doc.title)
-    correspondent_name = "Unbekannt"
-    if _paperless_meta_cache:
-        correspondent_name = getmeta("correspondent", doc, _paperless_meta_cache)
-    sanitized_correspondent = sanitize_filename(correspondent_name)
-    filename = f"{doc.id}--{sanitized_correspondent}--{sanitized_title}.json"
+    filename = build_export_filename(doc, kind="json", meta_cache=_paperless_meta_cache)
     json_path = os.path.join(working_dir, filename)
 
     detailed_doc = get_document_json(paperless=paperless, doc=doc)
@@ -1307,15 +1323,11 @@ import glob
 def link_export_file(doc, kind, working_dir, all_dir=".all"):
     """
     Links a cached file (pdf/json) from the .all directory to the working directory.
-    The filename will be in the format: [ID]--[Correspondent]--[Title].[kind]
+    The filename will be in the format: [ID]--[DocumentType]--[Correspondent]--[Title].[kind]
     """
     assert kind in ("pdf", "json")
 
-    correspondent_name = getmeta("correspondent", doc, _paperless_meta_cache) or "Unbekannt"
-    sanitized_correspondent = sanitize_filename(correspondent_name)
-    sanitized_title = sanitize_filename(doc.title)
-
-    filename = f"{doc.id}--{sanitized_correspondent}--{sanitized_title}.{kind}"
+    filename = build_export_filename(doc, kind=kind, meta_cache=_paperless_meta_cache)
     dest_path = os.path.join(working_dir, filename)
     dest_dir = os.path.dirname(dest_path)
 
@@ -1394,7 +1406,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
 
     raise RuntimeError(f"Zieldatei konnte nicht erstellt werden: {dest_path}")
 
-async def exportThem(paperless, dir, query, custom_field_query, max_files, frequency, api_url):
+async def exportThem(paperless, dir, query, custom_field_query, max_files, frequency, api_url, base_export_dir):
     count = 0 
     """Process and export documents"""
     document_data = []
@@ -1513,16 +1525,35 @@ async def exportThem(paperless, dir, query, custom_field_query, max_files, frequ
         #await export_pdf(doc, working_dir=dir)
         #export_json(paperless=paperless,doc=doc,working_dir=dir)
         # Statt export_pdf / export_json:
-        export_dir  = os.path.dirname(dir)
+        # Nutze das zentrale .all im Export-Root (unabhängig vom Unterordner).
+        all_dir = os.path.join(base_export_dir, ".all")
 
         try:
-            method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
+            method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=all_dir)
+        except FileNotFoundError as e:
+            # Falls der Cache die Datei nicht enthält, on-demand nachladen und erneut verlinken.
+            try:
+                ok = await export_pdf(doc, working_dir=all_dir)
+                if ok:
+                    method_pdf = link_export_file(doc, kind="pdf", working_dir=dir, all_dir=all_dir)
+                else:
+                    raise RuntimeError("PDF-Export schlug fehl")
+            except Exception as e2:
+                method_pdf = "ERROR"
+                message(f"❌ PDF fehlt für Doc {doc.id}: {e2}", target="both", level="warn")
         except Exception as e:
             method_pdf = "ERROR"
             message(f"❌ PDF fehlt für Doc {doc.id}: {e}", target="both", level="warn")
 
         try:
-            method_json = link_export_file(doc, kind="json", working_dir=dir, all_dir=os.path.join(export_dir, ".all"))
+            method_json = link_export_file(doc, kind="json", working_dir=dir, all_dir=all_dir)
+        except FileNotFoundError as e:
+            try:
+                export_json(paperless=paperless, doc=doc, working_dir=all_dir)
+                method_json = link_export_file(doc, kind="json", working_dir=dir, all_dir=all_dir)
+            except Exception as e2:
+                method_json = "ERROR"
+                message(f"❌ JSON fehlt für Doc {doc.id}: {e2}", target="both", level="warn")
         except Exception as e:
             method_json = "ERROR"
             message(f"❌ JSON fehlt für Doc {doc.id}: {e}", target="both", level="warn")
@@ -1633,12 +1664,8 @@ async def build_all_cache(paperless, export_dir, log_path=None):
 
     async for doc in safe_document_iterator(paperless):
         try:
-            correspondent_name = getmeta("correspondent", doc, _paperless_meta_cache) or "Unbekannt"
-            sanitized_correspondent = sanitize_filename(correspondent_name)
-            sanitized_title = sanitize_filename(doc.title)
-
-            pdf_filename = f"{doc.id}--{sanitized_correspondent}--{sanitized_title}.pdf"
-            json_filename = f"{doc.id}--{sanitized_correspondent}--{sanitized_title}.json"
+            pdf_filename = build_export_filename(doc, kind="pdf", meta_cache=_paperless_meta_cache)
+            json_filename = build_export_filename(doc, kind="json", meta_cache=_paperless_meta_cache)
 
             pdf_path = os.path.join(all_dir, pdf_filename)
             json_path = os.path.join(all_dir, json_filename)
@@ -1821,7 +1848,7 @@ async def main():
           display_dir = os.path.basename(root) or root
           print(f"{symbol} {display_dir} ({reason})")
           if should_run:
-              await exportThem(paperless=paperless, dir=root, query=query_value, custom_field_query=custom_field_query, max_files=max_files,frequency=frequency, api_url=api_url)
+              await exportThem(paperless=paperless, dir=root, query=query_value, custom_field_query=custom_field_query, max_files=max_files,frequency=frequency, api_url=api_url, base_export_dir=export_dir)
           # Keine Separator-Ausgabe mehr – sauberere Konsole
 
     except Exception as e:
