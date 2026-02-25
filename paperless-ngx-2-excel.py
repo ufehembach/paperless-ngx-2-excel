@@ -243,6 +243,7 @@ def get_script_version(version_file=".version"):
     Build a version string based on git tag + date + short commit hash.
     If git is not available, fall back to existing .version or generated fallback.
     """
+    MAX_LEN = 120  # safeguard against path/file-name limits
     # Try reading git tag
     try:
         tag = subprocess.check_output(
@@ -266,11 +267,10 @@ def get_script_version(version_file=".version"):
 
     if tag and commit:
         version = f"{tag}-{dt}-{commit}"
-        # Create a git tag if possible
-        try:
-            subprocess.run(["git", "tag", "-f", version], check=False)
-        except Exception:
-            pass
+        if len(version) > MAX_LEN:
+            # shorten overly long tags to keep filenames/refnames safe
+            tag_short = tag[:40]
+            version = f"{tag_short}-{dt}-{commit}"
         try:
             with open(version_file, "w") as f:
                 f.write(version)
@@ -281,6 +281,8 @@ def get_script_version(version_file=".version"):
     # If git is not available, try reading existing .version
     file_version = read_version_file(version_file)
     if file_version:
+        if len(file_version) > MAX_LEN:
+            return fallback_version()
         return file_version
 
     # Create fallback
