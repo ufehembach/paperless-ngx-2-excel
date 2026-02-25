@@ -1158,7 +1158,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     except Exception as e:
         message(f"⚠️ Fehler beim Erstellen der statischen Datei: {e}", "both")
 
-    # Excel erstellt – Ausgabe erfolgt später im Aufrufer
+    # Excel erstellt – Ausgabe erfolgt später im Aufrufer !!!
 
 # ----------------------
 def has_file_from_today(directory):
@@ -1378,7 +1378,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
             raise RuntimeError(f"Konnte Datei nicht kopieren: {src_path}")
 
     # 🔗 Symlink versuchen (relativer Pfad!)
-    try:
+:
         rel_src_path = os.path.relpath(src_path, start=dest_dir)
         os.symlink(rel_src_path, dest_path)
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
