@@ -1378,7 +1378,7 @@ def link_export_file(doc, kind, working_dir, all_dir=".all"):
             raise RuntimeError(f"Konnte Datei nicht kopieren: {src_path}")
 
     # 🔗 Symlink versuchen (relativer Pfad!)
-:
+
         rel_src_path = os.path.relpath(src_path, start=dest_dir)
         os.symlink(rel_src_path, dest_path)
         if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
