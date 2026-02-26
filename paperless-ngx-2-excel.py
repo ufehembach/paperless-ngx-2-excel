@@ -179,7 +179,7 @@ def xxcleanup_old_files(dir_path, filename_prefix, max_count_str, pattern="log")
 def get_log_filename(script_name, log_dir, suffix="progress"):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     ext = "log" if suffix == "log" else f"{suffix}.log"
-    return os.path.join(log_dir, f"##{script_name}__{timestamp}.{ext}")
+    return os.path.join(log_dir, f"{script_name}__{timestamp}.{ext}")
 
 def initialize_log(log_dir, script_name, max_files):
     final_log_path = get_log_filename(script_name, log_dir, "log")
@@ -190,7 +190,7 @@ def initialize_log(log_dir, script_name, max_files):
         os.remove(final_log_path)
     else:
         open(progress_log_path, "w").close()
-    cleanup_old_files(log_dir, "##" + script_name, max_files)
+    cleanup_old_files(log_dir, "" + script_name, max_files)
     return progress_log_path, final_log_path
 
 def finalize_log():
@@ -202,7 +202,7 @@ def finalize_log():
 def prepare_logging(log_dir, script_name, max_files):
     global _final_log_path
     progress_log_path, final_log_path = initialize_log(log_dir, script_name, max_files)
-    cleanup_old_files(log_dir,filename_prefix="##" + script_name ,pattern="log",max_count_str=max_files)
+    cleanup_old_files(log_dir,filename_prefix="" + script_name ,pattern="log",max_count_str=max_files)
     _final_log_path = final_log_path
     set_log_path(progress_log_path)
     atexit.register(finalize_log)
@@ -348,7 +348,7 @@ def cleanup_old_files(dir_path, filename_prefix, max_count_str, pattern="log"):
     Löscht alte Dateien mit bestimmtem Prefix und Endung, wenn das Limit überschritten ist.
 
     :param dir_path: Verzeichnis, in dem gesucht wird
-    :param filename_prefix: Anfang des Dateinamens, z. B. '##steuer'
+    :param filename_prefix: Anfang des Dateinamens, z. B. 'steuer'
     :param max_count_str: Maximale Anzahl an Dateien als String
     :param pattern: Dateityp bzw. Dateiendung, z. B. 'log' oder 'xlsx'
     """
@@ -374,9 +374,9 @@ def cleanup_old_files(dir_path, filename_prefix, max_count_str, pattern="log"):
 def get_log_filename(script_name, log_dir, suffix="progress"):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     if suffix == "log":
-        return os.path.join(log_dir, f"##{script_name}__{timestamp}.log")
+        return os.path.join(log_dir, f"{script_name}__{timestamp}.log")
     else:
-        return os.path.join(log_dir, f"##{script_name}__{timestamp}.{suffix}.log")
+        return os.path.join(log_dir, f"{script_name}__{timestamp}.{suffix}.log")
 
 # ---------------------- Configuration Loading ----------------------
 def load_config(config_path):
@@ -1009,7 +1009,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
 
         # Table sheet created (silent)
 
-        # debug_path3 = os.path.join(directory, f"##{base_dirname}-state3.xlsx")
+        # debug_path3 = os.path.join(directory, f"{base_dirname}-state3.xlsx")
         # wb.save(debug_path3)
 
         # --- EARLY MAIN TABLE DISABLED (last_col_letter not yet defined) ---
@@ -1149,7 +1149,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
         if len(row) >= 2 and row[1] == "":
             ws_meta.cell(row=row_idx, column=1).font = Font(bold=True, size=13, color="1F4E79")
 
-    # debug_path5 = os.path.join(directory, f"##{base_dirname}-state5.xlsx")
+    # debug_path5 = os.path.join(directory, f"{base_dirname}-state5.xlsx")
     # wb.save(debug_path5)
     wb.save(fullfilename)
 
@@ -1599,7 +1599,7 @@ import time
 
 def cache_is_fresh(all_dir: str, max_age_seconds: int = 3600) -> bool:
     """Prüft, ob der Cache im .all-Verzeichnis jünger als max_age_seconds ist."""
-    ts_file = os.path.join(all_dir, "##cache.timestamp")
+    ts_file = os.path.join(all_dir, "cache.timestamp")
     try:
         if not os.path.exists(ts_file):
             return False
@@ -1618,7 +1618,7 @@ def cache_is_fresh(all_dir: str, max_age_seconds: int = 3600) -> bool:
 
 def update_cache_timestamp(all_dir: str):
     """Setzt oder aktualisiert den Timestamp des Cache."""
-    ts_file = os.path.join(all_dir, "##cache.timestamp")
+    ts_file = os.path.join(all_dir, "cache.timestamp")
     try:
         with open(ts_file, "w") as f:
             f.write(str(int(time.time())))
