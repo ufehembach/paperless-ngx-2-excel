@@ -861,20 +861,36 @@ def clean_for_excel(value):
 
 # ----------------------
 
-def get_document_json(paperless,doc):
-    api_token = paperless._token # Dein-Token
+def get_document_json(paperless, doc, api_base=None):
+    """Retrieve detailed document metadata (document JSON)."""
+    api_token = paperless._token
     headers = {"Authorization": f"Token {api_token}"}
-
-    path=doc._api_path 
-    url=paperless._base_url
-
-    """Retrieve detailed document metadata from Paperless API."""
-    response = requests.get(f"{url}/{path}", headers=headers)
-    
-    if response.status_code == 200:
-        return response.json()  # Die JSON-Daten des Dokuments zurückgeben
+    if api_base:
+        url = f"{api_base}/api/documents/{doc.id}/"
     else:
-        raise Exception(f"Failed to fetch document metadata: {response.status_code}")
+        path = doc._api_path
+        url = f"{paperless._base_url}/{path}"
+
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json()
+    raise Exception(f"Failed to fetch document JSON: {response.status_code}")
+
+def get_document_metadata(paperless, doc, api_base=None):
+    """
+    Fetch the /metadata/ endpoint directly to avoid pypaperless validation quirks.
+    """
+    api_token = paperless._token
+    headers = {"Authorization": f"Token {api_token}"}
+    if api_base:
+        url = f"{api_base}/api/documents/{doc.id}/metadata/"
+    else:
+        url = f"{paperless._base_url}/{doc._api_path}/metadata/"
+
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json()
+    raise Exception(f"Failed to fetch document metadata: {response.status_code}")
 
 def export_json(paperless, doc, working_dir):
     """Export a document's metadata as JSON."""
@@ -1450,15 +1466,10 @@ async def exportThem(paperless, dir, query, custom_field_query, max_files, frequ
     #    desc=f"Dokumente für Query '{query}'"
     #)
 
+    api_base = api_url.rstrip("/")
+
     for doc in tqdm(documents, desc=None, unit="doc", disable=True):
         count += 1
-
-        # Metadaten optional abrufen (standardmäßig AUS, wegen pypaperless 5.x Validierung)
-        if os.environ.get("FETCH_METADATA", "0") == "1":
-            try:
-                _ = await retry_async(lambda: doc.get_metadata(), desc=f"Metadaten für Dokument {doc.id}")
-            except Exception as e:
-                message(f"Metadaten für Dokument {doc.id} übersprungen: {e}", target="log")
 
         docData = doc._data
         page_count = docData['page_count']
@@ -1490,6 +1501,36 @@ async def exportThem(paperless, dir, query, custom_field_query, max_files, frequ
         # (so that variants like "GutHembach St/<same template>" and "AndererOrt/<same template>" collapse)
         storage_group = sp_tail.strip() or sp_name or sp_prefix
 
+        # Metadaten-JSON immer laden (Storage-Pfad & media_filename)
+        meta_json = {}
+        try:
+            meta_json = get_document_metadata(paperless=paperless, doc=doc, api_base=api_base) or {}
+        except Exception as e:
+            message(f"Metadaten für Doc {doc.id} nicht geladen: {e}", target="log", level="warn")
+            meta_json = {}
+
+        # Medien-Dateiname – erst Basis, dann /metadata/, dann Dokument-JSON
+        media_filename = docData.get("media_filename")
+        if not media_filename:
+            media_filename = meta_json.get("media_filename") or meta_json.get("original_filename")
+        if not media_filename:
+            try:
+                doc_json = get_document_json(paperless=paperless, doc=doc, api_base=api_base)
+                media_filename = doc_json.get("media_filename") or doc_json.get("original_file_name") or ""
+            except Exception as e2:
+                message(f"media_filename fehlend für Doc {doc.id}: {e2}", target="log", level="warn")
+                media_filename = ""
+
+        # Wichtige Metadaten-Felder aus /metadata/
+        meta_size = meta_json.get("original_size") or meta_json.get("size") or ""
+        meta_mime = meta_json.get("original_mime_type") or meta_json.get("mime_type") or meta_json.get("content_type") or ""
+        meta_sha = meta_json.get("original_checksum") or meta_json.get("sha256") or meta_json.get("sha256sum") or ""
+        meta_archive_size = meta_json.get("archive_size") or ""
+        meta_archive_checksum = meta_json.get("archive_checksum") or ""
+        meta_archive_filename = meta_json.get("archive_media_filename") or ""
+        meta_original_filename = meta_json.get("original_filename") or ""
+        meta_lang = meta_json.get("lang") or ""
+
         # Daten für die Excel-Tabelle sammeln
         row = OrderedDict([
             ("ID", doc.id),
@@ -1517,7 +1558,18 @@ async def exportThem(paperless, dir, query, custom_field_query, max_files, frequ
             ("OriginalName", doc.original_file_name),
             ("ArchivedName", doc.archived_file_name),
             ("Owner", getattr(meta["users"].get(doc.owner), "username", "Unbekannt") if doc.owner else "Unbekannt"),
-            ("URL", f"{api_url}/documents/{doc.id}")
+            ("URL", f"{api_base}/documents/{doc.id}"),
+            ("MetadataURL", f"{api_base}/api/documents/{doc.id}/metadata/"),
+            ("MetadataOriginalFilename", meta_original_filename),
+            ("MetadataMediaFilename", media_filename),
+            ("MetadataArchiveFilename", meta_archive_filename),
+            ("MetadataOriginalSize", meta_size),
+            ("MetadataArchiveSize", meta_archive_size),
+            ("MetadataOriginalMime", meta_mime),
+            ("MetadataOriginalChecksum", meta_sha),
+            ("MetadataArchiveChecksum", meta_archive_checksum),
+            ("MetadataLang", meta_lang),
+            ("MediaFilename", media_filename)
         ]
         )
 
