@@ -1303,8 +1303,15 @@ async def get_documents_with_retry(paperless, query):
 async def collect_async_iter(aiter):
     return [item async for item in aiter]
 
-async def search_documents(paperless, query=None):
-    return [item async for item in paperless.documents.search(query or "")]
+async def search_documents(paperless, query=None, custom_field_query=None):
+    kwargs = {}
+    if custom_field_query:
+        kwargs["custom_field_query"] = custom_field_query
+
+    # pypaperless v3: use reduce() context to apply filters, then iterate helper
+    kwargs["query"] = query or ""
+    async with paperless.documents.reduce(**kwargs):
+        return [item async for item in paperless.documents]
 
 def find_cached_file(doc_id, all_dir, kind):
     """Findet Datei im .all-Verzeichnis anhand von doc_id und Dateityp ('pdf' oder 'json')"""
@@ -1433,17 +1440,10 @@ async def exportThem(paperless, dir, query, custom_field_query, max_files, frequ
     meta = await fetch_paperless_meta(paperless)
 
 #    documents = [item async for item in paperless.documents.search(query)]
-    combined_query = None
-    if query and custom_field_query:
-        combined_query = f"({query}) AND ({custom_field_query})"
-    elif custom_field_query:
-        combined_query = custom_field_query
-    else:
-        combined_query = query
 
     documents = await retry_async(
-       lambda: search_documents(paperless, query=combined_query),
-       desc=f"Dokumente für Query '{combined_query}'"
+       lambda: search_documents(paperless, query=query, custom_field_query=custom_field_query),
+       desc=f"Dokumente für Query '{query}' CF '{custom_field_query}'"
        )
 
     # --- REMOVE OLD FILES: optional cleanup (keine Debug-Ausgabe) ---
@@ -1885,10 +1885,16 @@ async def main():
 
           custom_field_query = None
 
-          if 'DATA' in config and 'query' in config['DATA']:
-              query_value = config['DATA']['query']
+          has_query = 'DATA' in config and 'query' in config['DATA']
+          has_cf_query = 'DATA' in config and 'custom_field_query' in config['DATA']
 
-          if 'DATA' in config and 'custom_field_query' in config['DATA']:
+          if has_query:
+              query_value = config['DATA']['query']
+          elif has_cf_query:
+              # If only custom_field_query is given, don't use folder name as query.
+              query_value = ''
+
+          if has_cf_query:
               custom_field_query = config['DATA']['custom_field_query']
 
           if 'EXPORT' in config and 'frequency' in config['EXPORT']:
