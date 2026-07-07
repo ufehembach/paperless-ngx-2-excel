@@ -983,10 +983,24 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
             ws_plain.cell(row=1, column=col_idx, value=col_name)
 
         # Write data starting at row 2
+        def _excel_safe(value):
+            """openpyxl kann nur Skalare (str/int/float/bool/date) schreiben.
+            Listen/Dicts/Sets (z.B. bei Tags, Custom Fields, storage_path)
+            werden hier zu einem lesbaren String zusammengefasst."""
+            if value is None:
+                return None
+            if isinstance(value, (str, int, float, bool)):
+                return value
+            if isinstance(value, (list, tuple, set)):
+                return ", ".join(str(_excel_safe(v)) for v in value)
+            if isinstance(value, dict):
+                return ", ".join(f"{k}={v}" for k, v in value.items())
+            return str(value)
+
         plain_row = 2
         for row in data:
             for col_idx, col_name in enumerate(headers, start=1):
-                ws_plain.cell(row=plain_row, column=col_idx, value=row[col_name])
+                ws_plain.cell(row=plain_row, column=col_idx, value=_excel_safe(row[col_name]))
             plain_row += 1
 
         from openpyxl.utils import get_column_letter
