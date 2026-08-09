@@ -34,3 +34,4 @@ exports/_*/**/*.pdf
 !requirements.txt
 !VERSION
 !.version
+.version
