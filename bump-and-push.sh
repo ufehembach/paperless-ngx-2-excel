@@ -3,8 +3,11 @@ set -e
 
 # ----- CONFIG -----
 VERSION_FILE=".version"
-TAG_PREFIX="v"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+# Tag/Labele prefix (keine doppelte Wiederholung von 'v' später hinzufügen)
+TAG_PREFIX="v"
+# Maximal sinnvolle Tag-Länge, um OS/Git-Pfadlimits nicht zu reißen
+MAX_TAG_LEN=96
 
 # ----- CHECK GIT -----
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -17,29 +20,38 @@ if [ "$BRANCH" = "HEAD" ]; then
     exit 1
 fi
 
-# ----- READ VERSION FILE -----
-if [ ! -f "$VERSION_FILE" ]; then
-    echo "0.0.0" > "$VERSION_FILE"
+# ----- BUILD VERSION -----
+# Basisteil aus .version lesen (SemVer), sonst 0.0.0
+if [ -f "$VERSION_FILE" ] && grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+' "$VERSION_FILE" >/dev/null 2>&1; then
+    BASE_VERSION=$(head -n1 "$VERSION_FILE" | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+else
+    BASE_VERSION="0.0.0"
 fi
 
-OLD_VERSION=$(cat "$VERSION_FILE")
-
-IFS='.' read -r MAJ MIN PATCH <<< "$OLD_VERSION"
-
+IFS='.' read -r MAJ MIN PATCH <<< "$BASE_VERSION"
 PATCH=$((PATCH + 1))
-NEW_VERSION="$MAJ.$MIN.$PATCH"
+BASE_VERSION="$MAJ.$MIN.$PATCH"
+
+TS=$(date +%Y%m%d-%H%M)
+COMMIT=$(git rev-parse --short HEAD)
+
+NEW_VERSION="${BASE_VERSION}-${TS}-${COMMIT}"
+TAG="${TAG_PREFIX}${NEW_VERSION}"
+
+# Safety: Tag nicht zu lang werden lassen
+if [ ${#TAG} -gt $MAX_TAG_LEN ]; then
+    COMMIT=$(git rev-parse --short=6 HEAD)
+    TAG="${TAG_PREFIX}${BASE_VERSION}-${TS}-${COMMIT}"
+fi
 
 echo "$NEW_VERSION" > "$VERSION_FILE"
-
-echo "🔢 Version bump: $OLD_VERSION → $NEW_VERSION"
+echo "🔢 Version: $BASE_VERSION  ➕  Suffix: $TS-$COMMIT"
 
 # ----- COMMIT -----
 git add "$VERSION_FILE"
 git commit -m "Bump version to $NEW_VERSION" || true
 
 # ----- TAG -----
-TAG="${TAG_PREFIX}${NEW_VERSION}"
-
 echo "🏷️  Creating/Updating tag: $TAG"
 git tag -f "$TAG"
 
