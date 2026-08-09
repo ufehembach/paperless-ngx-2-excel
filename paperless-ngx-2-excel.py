@@ -980,22 +980,24 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
 
         # Write headers at row 1
         for col_idx, col_name in enumerate(headers, start=1):
-            ws_plain.cell(row=1, column=col_idx, value=col_name)
+            ws_plain.cell(row=1, column=col_idx, value=clean_for_excel(col_name))
 
         # Write data starting at row 2
         def _excel_safe(value):
             """openpyxl kann nur Skalare (str/int/float/bool/date) schreiben.
             Listen/Dicts/Sets (z.B. bei Tags, Custom Fields, storage_path)
-            werden hier zu einem lesbaren String zusammengefasst."""
+            werden hier zu einem lesbaren String zusammengefasst.
+            Zusätzlich: für Excel/XML illegale Steuerzeichen entfernen
+            (verhindert IllegalCharacterError bei OCR-/Custom-Field-Werten)."""
             if value is None:
                 return None
             if isinstance(value, (str, int, float, bool)):
-                return value
+                return clean_for_excel(value)
             if isinstance(value, (list, tuple, set)):
-                return ", ".join(str(_excel_safe(v)) for v in value)
+                return clean_for_excel(", ".join(str(_excel_safe(v)) for v in value))
             if isinstance(value, dict):
-                return ", ".join(f"{k}={v}" for k, v in value.items())
-            return str(value)
+                return clean_for_excel(", ".join(f"{k}={v}" for k, v in value.items()))
+            return clean_for_excel(str(value))
 
         plain_row = 2
         for row in data:
@@ -1140,7 +1142,7 @@ def export_to_excel(data, file_path, script_name, currency_columns, dir, url, me
     # Schreibe alles in das Sheet (beliebig viele Spalten)
     for row_idx, row in enumerate(rows, start=1):
         for col_idx, value in enumerate(row, start=1):
-            ws_meta.cell(row=row_idx, column=col_idx, value=value)
+            ws_meta.cell(row=row_idx, column=col_idx, value=clean_for_excel(value))
 
     # --- Convert query/api rows into clickable hyperlinks + keep raw text ---
     hyperlink_fields = {"Query-Link": "Query-Link-Text",
