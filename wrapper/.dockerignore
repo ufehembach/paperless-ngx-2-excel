@@ -1,0 +1,6 @@
+@eaDir
+*.log
+*.last.log
+exports/
+.volume*
+
